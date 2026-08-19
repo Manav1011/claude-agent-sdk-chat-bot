@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QA Automation Studio</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Markdown & Code Highlighting Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              DEFAULT: '#f16913',
+              hover: '#ff7b25',
+              glow: 'rgba(241, 105, 19, 0.15)',
+              border: 'rgba(241, 105, 19, 0.3)',
+            },
+            dark: {
+              bg: '#0c0d10',
+              surface: '#14151a',
+              elevated: '#1c1e26',
+              border: '#2a2d37',
+              muted: '#343846',
+            },
+            txt: {
+              main: '#f3f4f6',
+              muted: '#9ca3af',
+              subtle: '#6b7280',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          boxShadow: {
+            'glow': '0 0 20px rgba(241, 105, 19, 0.15)',
+            'card-glow': '0 4px 20px -2px rgba(0, 0, 0, 0.5)',
+          }
+        },
+      },
+    }
+  </script>
+
+  <style>
+    /* Global Reset & Glassmorphism */
+    body {
+      background-color: #0c0d10;
+      color: #f3f4f6;
+      font-family: 'Inter', sans-serif;
+      overflow: hidden;
+    }
+
+    /* Ambient background glow */
+    .bg-ambient {
+      background: radial-gradient(circle at 50% 0%, rgba(241, 105, 19, 0.08) 0%, transparent 60%),
+                  radial-gradient(circle at 100% 100%, rgba(20, 21, 26, 0.8) 0%, transparent 50%);
+    }
+
+    /* Custom Scrollbar - Hidden but scrollable */
+    ::-webkit-scrollbar {
+      display: none;
+      width: 0px;
+      height: 0px;
+    }
+    * {
+      -ms-overflow-style: none;  /* IE and Edge */
+      scrollbar-width: none;  /* Firefox */
+    }
+
+    /* Markdown styling inside assistant messages */
+    .prose-dark {
+      color: #e5e7eb;
+      font-size: 0.925rem;
+      line-height: 1.6;
+    }
+    .prose-dark p {
+      margin-bottom: 0.75rem;
+    }
+    .prose-dark p:last-child {
+      margin-bottom: 0;
+    }
+    .prose-dark h1, .prose-dark h2, .prose-dark h3, .prose-dark h4 {
+      color: #ffffff;
+      font-weight: 600;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    .prose-dark ul {
+      list-style-type: disc;
+      padding-left: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .prose-dark ol {
+      list-style-type: decimal;
+      padding-left: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .prose-dark li {
+      margin-bottom: 0.25rem;
+    }
+    .prose-dark code:not(pre code) {
+      background: #2a2d37;
+      color: #f16913;
+      padding: 0.15rem 0.4rem;
+      border-radius: 0.25rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.825em;
+    }
+    .prose-dark pre {
+      background: #14151a !important;
+      border: 1px solid #2a2d37;
+      border-radius: 0.5rem;
+      margin: 0.75rem 0;
+      position: relative;
+      overflow: hidden;
+    }
+    .prose-dark pre code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.825rem;
+      padding: 1rem !important;
+      display: block;
+      overflow-x: auto;
+    }
+    .prose-dark table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+      font-size: 0.85rem;
+    }
+    .prose-dark th {
+      background-color: #1c1e26;
+      color: #ffffff;
+      font-weight: 600;
+      text-align: left;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid #2a2d37;
+    }
+    .prose-dark td {
+      padding: 0.5rem 0.8rem;
+      border: 1px solid #2a2d37;
+    }
+    .prose-dark tr:nth-child(even) {
+      background-color: rgba(28, 30, 38, 0.4);
+    }
+
+    /* Message animation */
+    @keyframes slideUpFade {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .animate-msg {
+      animation: slideUpFade 0.25s ease-out forwards;
+    }
+
+    /* Typing Dots Animation */
+    @keyframes dotPulse {
+      0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+      40% { opacity: 1; transform: scale(1.1); }
+    }
+    .pulse-dot {
+      animation: dotPulse 1.4s infinite ease-in-out both;
+    }
+    .pulse-dot:nth-child(1) { animation-delay: -0.32s; }
+    .pulse-dot:nth-child(2) { animation-delay: -0.16s; }
+  </style>
+</head>
+<body class="bg-dark-bg text-txt-main h-screen flex flex-col antialiased selection:bg-brand selection:text-white">
+  
+  <div class="flex h-full w-full bg-ambient relative">
+    
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-64 bg-dark-surface/90 backdrop-blur-md border-r border-dark-border flex flex-col shrink-0 transition-all duration-300 z-30">
+      
+      <!-- App Brand -->
+      <div class="p-4 border-b border-dark-border flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-brand to-amber-600 flex items-center justify-center shadow-glow text-dark-bg font-bold">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <div>
+            <h1 class="font-semibold text-sm tracking-wide text-white">QA Automation</h1>
+            <p class="text-[10px] text-txt-subtle uppercase tracking-wider font-mono">Agent Studio</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Workspace Selector -->
+      <div class="px-3 py-2 border-b border-dark-border">
+        <div class="flex items-center gap-2 text-[10px] text-txt-subtle uppercase tracking-wider mb-1.5">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+          </svg>
+          <span>Workspace</span>
+        </div>
+        <div class="flex gap-1.5">
+          <input id="workspace-input" type="text" 
+                 placeholder="Enter workspace path..."
+                 class="flex-1 bg-dark-elevated border border-dark-border rounded-lg px-2.5 py-1.5 text-[11px] text-txt-main font-mono placeholder:text-txt-subtle focus:outline-none focus:border-brand-border" />
+          <button id="workspace-set-btn"
+                  class="bg-brand hover:bg-brand-hover text-white text-[10px] font-medium px-2.5 py-1.5 rounded-lg transition-colors">
+            Set
+          </button>
+        </div>
+        <div id="workspace-status" class="mt-1 text-[10px] text-txt-subtle font-mono truncate"></div>
+      </div>
+
+      <!-- Action Button -->
+      <div class="p-3">
+        <button id="new-chat-btn" class="w-full bg-brand hover:bg-brand-hover text-white font-medium text-xs py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all duration-200 shadow-glow active:scale-[0.98]">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          <span>New Conversation</span>
+        </button>
+      </div>
+
+      <!-- Sessions List Title -->
+      <div class="px-4 py-2 flex items-center justify-between text-[11px] font-semibold text-txt-subtle uppercase tracking-wider">
+        <span>Recent Chats</span>
+        <button id="clear-all-sessions-btn" title="Clear all local history" class="hover:text-red-400 transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Session List Container -->
+      <div id="session-list" class="flex-1 overflow-y-auto px-2 space-y-1">
+        <div id="sessions-container"></div>
+      </div>
+
+      <!-- Sidebar Footer Status & Token Usage -->
+      <div class="p-3 border-t border-dark-border bg-dark-bg/40 text-[11px] space-y-2">
+        <div id="session-token-card" class="bg-dark-surface border border-dark-border rounded-lg p-2 font-mono text-[10px] space-y-1.5">
+          <div class="flex items-center justify-between text-txt-subtle font-sans text-[10px] font-medium border-b border-dark-border/40 pb-1">
+            <span>Session Tokens</span>
+            <span id="session-total-tokens" class="text-brand font-bold">0</span>
+          </div>
+          <div class="flex items-center justify-between text-txt-subtle">
+            <span>Prompt: <strong id="session-input-tokens" class="text-txt-muted">0</strong></span>
+            <span>Completion: <strong id="session-output-tokens" class="text-txt-muted">0</strong></span>
+          </div>
+          <div class="flex items-center justify-between text-txt-subtle border-t border-dark-border/30 pt-1">
+            <span class="flex items-center gap-1">Context: <strong id="session-context-tokens" class="text-amber-400">0</strong></span>
+            <span class="text-[9px] text-txt-subtle/70 font-sans italic">next prompt input</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-txt-subtle flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            System Ready
+          </span>
+          <span id="connection-status" class="font-mono text-[10px] px-2 py-0.5 rounded bg-dark-elevated text-txt-muted border border-dark-border">Checking...</span>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 flex flex-col min-w-0 h-full relative">
+      
+      <!-- Top Mobile Navigation -->
+      <div class="lg:hidden flex items-center justify-between p-3 border-b border-dark-border bg-dark-surface/90 backdrop-blur-md">
+        <div class="flex items-center gap-3">
+          <button id="menu-toggle" class="p-2 text-txt-muted hover:text-white rounded-lg bg-dark-elevated border border-dark-border">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+          </button>
+          <span class="font-medium text-sm text-white">QA Automation Agent</span>
+        </div>
+      </div>
+
+      <!-- Chat Messages Scroll Container -->
+      <div id="messages-container" class="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6 max-w-4xl w-full mx-auto">
+        
+        <!-- Empty State -->
+        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center my-auto py-12">
+          <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-brand/20 to-amber-500/10 border border-brand-border flex items-center justify-center mb-5 shadow-glow">
+            <svg class="w-8 h-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+            </svg>
+          </div>
+          <h2 class="text-xl font-semibold text-white mb-2">How can I assist your testing today?</h2>
+          <p class="text-txt-muted text-sm max-w-md mb-8 leading-relaxed">
+            I can inspect your web workflows, generate automation scripts, execute multi-step recordings, or answer skill queries.
+          </p>
+
+          <!-- Prompt Cards -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
+            <button class="prompt-chip text-left p-3.5 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand-border transition-all duration-200 group">
+              <div class="font-medium text-xs text-white group-hover:text-brand mb-1">What skills do you have?</div>
+              <div class="text-[11px] text-txt-subtle truncate">List all installed automation capabilities</div>
+            </button>
+            <button class="prompt-chip text-left p-3.5 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand-border transition-all duration-200 group">
+              <div class="font-medium text-xs text-white group-hover:text-brand mb-1">Automate login flow</div>
+              <div class="text-[11px] text-txt-subtle truncate">Create auto-recording web interaction test</div>
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Floating Input Container -->
+      <div class="p-4 lg:p-6 w-full max-w-4xl mx-auto shrink-0">
+        <div class="relative rounded-2xl bg-dark-surface/90 backdrop-blur-xl border border-dark-border focus-within:border-brand-border focus-within:ring-1 focus-within:ring-brand/40 shadow-2xl transition-all duration-200 p-3">
+          
+          <textarea
+            id="message-input"
+            rows="1"
+            placeholder="Ask QA Agent to automate a workflow..."
+            class="w-full bg-transparent px-2 pt-1 pb-2 text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-48 font-sans leading-relaxed block overflow-y-auto"
+          ></textarea>
+
+          <div class="flex items-center justify-between border-t border-dark-border/40 pt-2.5 mt-1 text-[11px] text-txt-subtle">
+            <div class="flex items-center gap-2 font-mono">
+              <span class="px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">Shift + Enter</span> for new line
+            </div>
+            
+            <button
+              id="send-btn"
+              disabled
+              class="bg-brand hover:bg-brand-hover text-white font-medium text-xs px-4 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-200 disabled:opacity-40 disabled:hover:bg-brand shadow-glow active:scale-95"
+            >
+              <span>Send</span>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+              </svg>
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // ============== Setup Markdown Renderer ==============
+    marked.setOptions({
+      highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+      },
+      breaks: true
+    });
+
+    // ============== State Management ==============
+    const state = {
+      currentThreadId: localStorage.getItem('qa-chat-current-thread') || null,
+      sessions: [],
+      messages: {},
+      isStreaming: false,
+      abortController: null,
+      currentWorkspace: null,
+      workspaceHistory: JSON.parse(localStorage.getItem('qa-workspaces') || '[]'),
+    };
+
+    function setCurrentThread(threadId) {
+      state.currentThreadId = threadId;
+      if (threadId) {
+        localStorage.setItem('qa-chat-current-thread', threadId);
+      } else {
+        localStorage.removeItem('qa-chat-current-thread');
+      }
+    }
+
+    function getSessionMessages(threadId) {
+      return state.messages[threadId] || [];
+    }
+
+    // ============== Elements Reference ==============
+    const el = {
+      sidebar: document.getElementById('sidebar'),
+      sessionList: document.getElementById('sessions-container'),
+      messagesContainer: document.getElementById('messages-container'),
+      emptyState: document.getElementById('empty-state'),
+      messageInput: document.getElementById('message-input'),
+      sendBtn: document.getElementById('send-btn'),
+      newChatBtn: document.getElementById('new-chat-btn'),
+      clearAllBtn: document.getElementById('clear-all-sessions-btn'),
+      menuToggle: document.getElementById('menu-toggle'),
+      connectionStatus: document.getElementById('connection-status'),
+      sessionTotalTokens: document.getElementById('session-total-tokens'),
+      sessionInputTokens: document.getElementById('session-input-tokens'),
+      sessionOutputTokens: document.getElementById('session-output-tokens'),
+      sessionContextTokens: document.getElementById('session-context-tokens'),
+      workspaceInput: document.getElementById('workspace-input'),
+      workspaceSetBtn: document.getElementById('workspace-set-btn'),
+      workspaceStatus: document.getElementById('workspace-status'),
+    };
+
+    // ============== Health Check ==============
+    async function checkHealth() {
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        if (data.status === 'ok') {
+          el.connectionStatus.textContent = 'Agent Online';
+          el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30';
+        } else {
+          el.connectionStatus.textContent = 'Degraded';
+          el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30';
+        }
+      } catch (e) {
+        el.connectionStatus.textContent = 'Offline';
+        el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/30';
+      }
+    }
+
+    // ============== Workspace Management ==============
+    async function loadWorkspace() {
+      try {
+        const params = state.currentThreadId ? `?thread_id=${encodeURIComponent(state.currentThreadId)}` : '';
+        const res = await fetch(`/api/workspaces/current${params}`);
+        const data = await res.json();
+        state.currentWorkspace = data.workspace;
+        updateWorkspaceUI(data.workspace);
+      } catch (e) {
+        console.error('Failed to load workspace:', e);
+      }
+    }
+
+    async function setWorkspace(workspacePath) {
+      try {
+        const res = await fetch('/api/workspaces/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            thread_id: state.currentThreadId,
+            workspace: workspacePath 
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || `Server returned error ${res.status}`);
+        }
+        const data = await res.json();
+        state.currentWorkspace = data.workspace;
+        
+        // Track workspace history
+        state.workspaceHistory = [data.workspace, ...state.workspaceHistory.filter(p => p !== data.workspace)].slice(0, 10);
+        localStorage.setItem('qa-workspaces', JSON.stringify(state.workspaceHistory));
+        
+        updateWorkspaceUI(data.workspace);
+        showNotification(`Workspace set to: ${shortenPath(data.workspace)}`, 'success');
+      } catch(e) {
+        showNotification(`Workspace error: ${e.message}`, 'error');
+      }
+    }
+
+    function updateWorkspaceUI(workspace) {
+      if (el.workspaceInput) el.workspaceInput.value = workspace || '';
+      if (el.workspaceStatus) el.workspaceStatus.textContent = workspace ? shortenPath(workspace) : 'Not set';
+    }
+
+    function shortenPath(p) {
+      const parts = p.split('/');
+      return parts.length > 3 ? '.../' + parts.slice(-3).join('/') : p;
+    }
+
+    // ============== Streaming Logic ==============
+    async function* streamChat(message, threadId, signal) {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          message, 
+          thread_id: threadId,
+          workspace: state.currentWorkspace || undefined,
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned error ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (const part of parts) {
+            const lines = part.split('\n');
+            let currentEvent = null;
+            let eventData = null;
+
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
+                try {
+                  eventData = JSON.parse(line.slice(6).trim());
+                } catch (e) {}
+              }
+            }
+
+            if (currentEvent && eventData !== null) {
+              yield { event: currentEvent, data: eventData };
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    // ============== Render Functions ==============
+    function renderSessions() {
+      if (state.sessions.length === 0) {
+        el.sessionList.innerHTML = `
+          <div class="px-3 py-6 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-xl my-2">
+            No history yet
+          </div>
+        `;
+        return;
+      }
+
+      el.sessionList.innerHTML = state.sessions.map(s => {
+        const isActive = s.thread_id === state.currentThreadId;
+        const titleText = s.first_message && s.first_message !== s.thread_id ? s.first_message : 'New conversation';
+        return `
+          <div class="session-item group px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 flex items-center justify-between ${isActive ? 'bg-dark-elevated border border-brand-border text-white shadow-sm' : 'hover:bg-dark-elevated/60 text-txt-muted hover:text-white border border-transparent'}" data-thread-id="${s.thread_id}">
+            <div class="flex-1 min-w-0 pr-2">
+              <div class="font-medium text-xs truncate capitalize text-txt-main">${escapeHtml(titleText)}</div>
+              <div class="font-mono text-[9px] text-txt-subtle/80 truncate mt-0.5">${s.thread_id}</div>
+            </div>
+            <button class="delete-session-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity" data-thread-id="${s.thread_id}" title="Delete session">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      // Add Click Listeners
+      el.sessionList.querySelectorAll('.session-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.closest('.delete-session-btn')) return;
+          selectSession(item.dataset.threadId);
+        });
+      });
+
+      el.sessionList.querySelectorAll('.delete-session-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteSession(btn.dataset.threadId);
+        });
+      });
+    }
+
+    function renderMessageNode(msg) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg w-full';
+
+      if (msg.type === 'human') {
+        wrapper.innerHTML = `
+          <div class="flex justify-end mb-4">
+            <div class="bg-dark-elevated border border-dark-border text-white text-sm rounded-2xl rounded-tr-xs px-4 py-3 max-w-[80%] shadow-sm">
+              ${escapeHtml(msg.content)}
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'ai') {
+        const parsedContent = marked.parse(msg.content || '');
+        const usageBadge = msg.usage ? `
+          <div class="mt-3 pt-2 border-t border-dark-border/60 flex items-center gap-3 font-mono text-[10px] text-txt-subtle">
+            <span title="Input tokens">in: <strong class="text-txt-muted">${msg.usage.input_tokens || 0}</strong></span>
+            <span title="Output tokens">out: <strong class="text-txt-muted">${msg.usage.output_tokens || 0}</strong></span>
+            <span title="Total tokens">total: <strong class="text-brand">${msg.usage.total_tokens || 0}</strong></span>
+          </div>
+        ` : '';
+
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-6">
+            <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 mt-0.5 text-brand">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-dark-surface border border-dark-border rounded-2xl rounded-tl-xs px-5 py-4 max-w-[90%] shadow-card-glow prose-dark">
+              ${parsedContent}
+              ${usageBadge}
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'thinking') {
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-4">
+            <div class="w-7 h-7 rounded-lg bg-dark-elevated border border-dark-border flex items-center justify-center shrink-0 mt-0.5 text-txt-subtle">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-dark-surface/60 border border-dark-border/60 rounded-xl px-4 py-3 max-w-[90%] font-mono text-xs">
+              <details class="group">
+                <summary class="flex items-center justify-between cursor-pointer text-txt-muted hover:text-white select-none">
+                  <span class="font-sans font-medium text-xs flex items-center gap-2">
+                    <span>Thought Process</span>
+                  </span>
+                  <svg class="w-4 h-4 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </summary>
+                <div class="mt-2.5 pt-2.5 border-t border-dark-border text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px]">
+                  ${escapeHtml(msg.content)}
+                </div>
+              </details>
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'tool_result') {
+        // Show combined card: tool name + input args + output
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-4">
+            <div class="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5 text-amber-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-dark-surface border border-amber-500/20 rounded-xl px-3.5 py-2.5 max-w-[90%] font-mono text-xs">
+              <div class="flex items-center gap-2 text-amber-400 font-medium text-[11px] mb-2">
+                <span>TOOL:</span>
+                <span class="bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 text-white">${escapeHtml(msg.name)}</span>
+              </div>
+              ${msg.input && Object.keys(msg.input).length > 0 ? `
+                <div class="mb-2">
+                  <div class="text-[10px] text-txt-subtle uppercase tracking-wider mb-1">INPUT:</div>
+                  <pre class="text-[11px] text-emerald-300 overflow-x-auto bg-dark-bg p-2 rounded border border-dark-border">${escapeHtml(formatJson(msg.input))}</pre>
+                </div>
+              ` : ''}
+              ${msg.content ? `
+                <div>
+                  <div class="text-[10px] text-txt-subtle uppercase tracking-wider mb-1">OUTPUT:</div>
+                  <pre class="text-[11px] text-txt-muted overflow-x-auto bg-dark-bg p-2.5 rounded border border-dark-border max-h-48">${escapeHtml(formatJson(msg.content))}</pre>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }
+
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    // Persistent Loading Bar State Control
+    let activeLoadingNode = null;
+
+    function showLoadingIndicator() {
+      if (activeLoadingNode) return;
+
+      activeLoadingNode = document.createElement('div');
+      activeLoadingNode.id = 'active-loader';
+      activeLoadingNode.className = 'animate-msg flex items-center gap-3 mb-4';
+      activeLoadingNode.innerHTML = `
+        <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 text-brand">
+          <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </div>
+        <div class="bg-dark-surface border border-dark-border rounded-xl px-4 py-2.5 flex items-center gap-2">
+          <span class="flex gap-1 items-center">
+            <span class="w-1.5 h-1.5 rounded-full bg-brand pulse-dot"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-brand pulse-dot"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-brand pulse-dot"></span>
+          </span>
+          <span class="text-xs text-txt-muted font-medium">Agent is processing...</span>
+        </div>
+      `;
+      el.messagesContainer.appendChild(activeLoadingNode);
+      scrollToBottom();
+    }
+
+    function hideLoadingIndicator() {
+      if (activeLoadingNode) {
+        activeLoadingNode.remove();
+        activeLoadingNode = null;
+      }
+    }
+
+    function showError(message) {
+      hideLoadingIndicator();
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg flex justify-start mb-4';
+      wrapper.innerHTML = `
+        <div class="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 max-w-[85%] text-xs text-red-400">
+          <span class="font-semibold block mb-1">Execution Error</span>
+          ${escapeHtml(message)}
+        </div>
+      `;
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    // ============== Utilities ==============
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function formatJson(val) {
+      if (typeof val === 'object') return JSON.stringify(val, null, 2);
+      try {
+        return JSON.stringify(JSON.parse(val), null, 2);
+      } catch {
+        return String(val);
+      }
+    }
+
+    let _scrollRafPending = false;
+    function scrollToBottom() {
+      if (_scrollRafPending) return;
+      _scrollRafPending = true;
+      requestAnimationFrame(() => {
+        el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+        _scrollRafPending = false;
+      });
+    }
+
+    function updateSessionTokensWidget() {
+      if (!state.currentThreadId) {
+        if (el.sessionTotalTokens) el.sessionTotalTokens.textContent = '0';
+        if (el.sessionInputTokens) el.sessionInputTokens.textContent = '0';
+        if (el.sessionOutputTokens) el.sessionOutputTokens.textContent = '0';
+        if (el.sessionContextTokens) el.sessionContextTokens.textContent = '0';
+        return;
+      }
+      const msgs = getSessionMessages(state.currentThreadId);
+      let inp = 0, out = 0, tot = 0, context = 0;
+      for (const m of msgs) {
+        if (m.usage) {
+          inp += m.usage.input_tokens || 0;
+          out += m.usage.output_tokens || 0;
+          tot += m.usage.total_tokens || 0;
+          // Context = latest (max) input_tokens — what the next prompt will receive
+          context = Math.max(context, m.usage.input_tokens || 0);
+        }
+      }
+      if (el.sessionTotalTokens) el.sessionTotalTokens.textContent = tot.toLocaleString();
+      if (el.sessionInputTokens) el.sessionInputTokens.textContent = inp.toLocaleString();
+      if (el.sessionOutputTokens) el.sessionOutputTokens.textContent = out.toLocaleString();
+      if (el.sessionContextTokens) el.sessionContextTokens.textContent = context.toLocaleString();
+    }
+
+    // ============== API Interactions ==============
+    async function loadSessionsFromDB() {
+      try {
+        const res = await fetch('/api/sessions');
+        if (!res.ok) return;
+        const data = await res.json();
+        state.sessions = data.sessions || [];
+        renderSessions();
+      } catch (e) {
+        console.error('Failed to load sessions:', e);
+      }
+    }
+
+    async function selectSession(threadId) {
+      setCurrentThread(threadId);
+      renderSessions();
+
+      el.messagesContainer.innerHTML = '';
+      showLoadingIndicator();
+
+      try {
+        const res = await fetch(`/api/sessions/${threadId}/messages`);
+        hideLoadingIndicator();
+
+        if (res.ok) {
+          const data = await res.json();
+          state.messages[threadId] = data.messages || [];
+
+          if (state.messages[threadId].length === 0) {
+            el.emptyState.style.display = 'flex';
+            el.messagesContainer.appendChild(el.emptyState);
+          } else {
+            el.emptyState.style.display = 'none';
+            for (const msg of state.messages[threadId]) {
+              renderMessageNode(msg);
+            }
+          }
+        }
+      } catch (e) {
+        hideLoadingIndicator();
+        showError('Failed to load session messages from server.');
+      }
+      updateSessionTokensWidget();
+    }
+
+    function startNewChat() {
+      // Abort any in-progress stream
+      if (state.abortController) {
+        state.abortController.abort();
+        state.abortController = null;
+        state.isStreaming = false;
+      }
+      setCurrentThread(null);
+      renderSessions();
+      el.messagesContainer.innerHTML = '';
+      el.messagesContainer.appendChild(el.emptyState);
+      el.emptyState.style.display = 'flex';
+      updateSessionTokensWidget();
+      el.messageInput.focus();
+    }
+
+    async function deleteSession(threadId) {
+      try {
+        await fetch(`/api/sessions/${threadId}`, { method: 'DELETE' });
+      } catch (e) {}
+
+      state.sessions = state.sessions.filter(s => s.thread_id !== threadId);
+      delete state.messages[threadId];
+
+      if (state.currentThreadId === threadId) {
+        startNewChat();
+      } else {
+        renderSessions();
+      }
+    }
+
+    async function clearAllSessions() {
+      if (!confirm('Clear all conversation history?')) return;
+      try {
+        await fetch('/api/sessions', { method: 'DELETE' });
+      } catch (e) {
+        console.error('Failed to bulk delete sessions:', e);
+      }
+      state.sessions = [];
+      state.messages = {};
+      startNewChat();
+    }
+
+    async function sendMessage(overrideText = null) {
+      const text = (overrideText || el.messageInput.value).trim();
+      if (!text || state.isStreaming) return;
+
+      el.messageInput.value = '';
+      el.messageInput.style.height = 'auto';
+      el.sendBtn.disabled = true;
+      state.isStreaming = true;
+
+      // Hide empty screen
+      el.emptyState.style.display = 'none';
+
+      // Ensure thread ID
+      if (!state.currentThreadId) {
+        state.currentThreadId = `session-${Date.now().toString(36)}`;
+      }
+
+      // Add user message node
+      const userMsg = { type: 'human', content: text };
+      renderMessageNode(userMsg);
+      if (!state.messages[state.currentThreadId]) {
+        state.messages[state.currentThreadId] = [];
+      }
+      state.messages[state.currentThreadId].push(userMsg);
+
+      // Save session item preview
+      const sessionIndex = state.sessions.findIndex(s => s.thread_id === state.currentThreadId);
+      if (sessionIndex === -1) {
+        state.sessions.unshift({
+          thread_id: state.currentThreadId,
+          first_message: text.substring(0, 45),
+          updated_at: new Date().toISOString()
+        });
+      } else {
+        state.sessions[sessionIndex].updated_at = new Date().toISOString();
+      }
+      renderSessions();
+
+      // Show loader
+      showLoadingIndicator();
+
+      // Create AbortController for cancellation support
+      state.abortController = new AbortController();
+
+      try {
+        let activeAiWrapper = null;
+        let activeAiTextEl = null;
+        let activeThinkingTextEl = null;
+
+        for await (const { event, data } of streamChat(text, state.currentThreadId, state.abortController.signal)) {
+          if (event === 'message') {
+            if (data.type === 'human') continue;
+
+            hideLoadingIndicator();
+
+            if (data.type === 'text_delta') {
+              if (!activeAiWrapper) {
+                activeAiWrapper = document.createElement('div');
+                activeAiWrapper.className = 'animate-msg w-full flex items-start gap-3 mb-6';
+                activeAiWrapper.innerHTML = `
+                  <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 mt-0.5 text-brand">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                  </div>
+                  <div class="flex-1 bg-dark-surface border border-dark-border rounded-2xl rounded-tl-xs px-5 py-4 max-w-[90%] shadow-card-glow prose-dark ai-content-body">
+                  </div>
+                `;
+                activeAiTextEl = activeAiWrapper.querySelector('.ai-content-body');
+                activeAiTextEl.dataset.raw = '';
+                el.messagesContainer.appendChild(activeAiWrapper);
+              }
+
+              activeAiTextEl.dataset.raw += data.content;
+              // Debounce markdown re-rendering with requestAnimationFrame
+              if (!activeAiTextEl._rafPending) {
+                activeAiTextEl._rafPending = true;
+                requestAnimationFrame(() => {
+                  activeAiTextEl.innerHTML = marked.parse(activeAiTextEl.dataset.raw);
+                  activeAiTextEl._rafPending = false;
+                  scrollToBottom();
+                });
+              }
+            }
+            else if (data.type === 'thinking_delta') {
+              if (!activeThinkingTextEl) {
+                const thinkWrapper = document.createElement('div');
+                thinkWrapper.className = 'animate-msg w-full flex items-start gap-3 mb-4';
+                thinkWrapper.innerHTML = `
+                  <div class="w-7 h-7 rounded-lg bg-dark-elevated border border-dark-border flex items-center justify-center shrink-0 mt-0.5 text-txt-subtle">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    </svg>
+                  </div>
+                  <div class="flex-1 bg-dark-surface/60 border border-dark-border/60 rounded-xl px-4 py-3 max-w-[90%] font-mono text-xs">
+                    <details class="group" open>
+                      <summary class="flex items-center justify-between cursor-pointer text-txt-muted hover:text-white select-none">
+                        <span class="font-sans font-medium text-xs flex items-center gap-2">
+                          <span>Thought Process</span>
+                        </span>
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                      </summary>
+                      <div class="thinking-body mt-2.5 pt-2.5 border-t border-dark-border text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px]"></div>
+                    </details>
+                  </div>
+                `;
+                activeThinkingTextEl = thinkWrapper.querySelector('.thinking-body');
+                el.messagesContainer.appendChild(thinkWrapper);
+              }
+              activeThinkingTextEl.textContent += data.content;
+              scrollToBottom();
+            }
+            else {
+              activeAiWrapper = null;
+              activeAiTextEl = null;
+              activeThinkingTextEl = null;
+              renderMessageNode(data);
+              showLoadingIndicator();
+            }
+          } else if (event === 'done') {
+            hideLoadingIndicator();
+            if (data.thread_id && data.thread_id !== state.currentThreadId) {
+              setCurrentThread(data.thread_id);
+            }
+            if (data.usage) {
+              if (activeAiTextEl) {
+                const usageBadge = document.createElement('div');
+                usageBadge.className = 'mt-3 pt-2 border-t border-dark-border/60 flex items-center gap-3 font-mono text-[10px] text-txt-subtle';
+                usageBadge.innerHTML = `
+                  <span title="Input tokens">in: <strong class="text-txt-muted">${data.usage.input_tokens || 0}</strong></span>
+                  <span title="Output tokens">out: <strong class="text-txt-muted">${data.usage.output_tokens || 0}</strong></span>
+                  <span title="Total tokens">total: <strong class="text-brand">${data.usage.total_tokens || 0}</strong></span>
+                `;
+                activeAiTextEl.appendChild(usageBadge);
+              }
+
+              // Update token stats directly in memory without extra API requests
+              if (!state.messages[state.currentThreadId]) {
+                state.messages[state.currentThreadId] = [];
+              }
+              state.messages[state.currentThreadId].push({ usage: data.usage });
+              updateSessionTokensWidget();
+            }
+            await loadSessionsFromDB();
+          } else if (event === 'error') {
+            showError(data.message || 'Stream processing failed');
+          }
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          showError(err.message || 'Failed to communicate with agent server');
+        }
+      } finally {
+        hideLoadingIndicator();
+        state.isStreaming = false;
+        state.abortController = null;
+        el.sendBtn.disabled = el.messageInput.value.trim().length === 0;
+        el.messageInput.focus();
+      }
+    }
+
+    // ============== Notifications ==============
+    function showNotification(message, type = 'info') {
+      const notification = document.createElement('div');
+      const colors = {
+        success: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+        error: 'bg-red-500/10 text-red-400 border-red-500/30',
+        info: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+      };
+      notification.className = `fixed bottom-4 right-4 z-50 px-4 py-2 rounded-lg text-xs font-mono border ${colors[type] || colors.info} shadow-lg animate-msg`;
+      notification.textContent = message;
+      document.body.appendChild(notification);
+      setTimeout(() => {
+        notification.style.opacity = '0';
+        notification.style.transition = 'opacity 0.3s';
+        setTimeout(() => notification.remove(), 300);
+      }, 3000);
+    }
+
+    // ============== Listeners ==============
+    el.sendBtn.addEventListener('click', () => sendMessage());
+
+    el.messageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    el.messageInput.addEventListener('input', () => {
+      // Auto expand textarea height
+      el.messageInput.style.height = 'auto';
+      el.messageInput.style.height = Math.min(el.messageInput.scrollHeight, 192) + 'px';
+
+      el.sendBtn.disabled = el.messageInput.value.trim().length === 0 || state.isStreaming;
+    });
+
+    el.newChatBtn.addEventListener('click', startNewChat);
+    el.clearAllBtn.addEventListener('click', clearAllSessions);
+
+    el.workspaceSetBtn?.addEventListener('click', () => {
+      const workspace = el.workspaceInput?.value?.trim();
+      if (workspace) {
+        setWorkspace(workspace);
+      }
+    });
+
+    el.workspaceInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const workspace = el.workspaceInput.value.trim();
+        if (workspace) {
+          e.preventDefault();
+          setWorkspace(workspace);
+        }
+      }
+    });
+
+    el.menuToggle?.addEventListener('click', () => {
+      el.sidebar.classList.toggle('-translate-x-full');
+    });
+
+    document.querySelectorAll('.prompt-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const text = chip.querySelector('.font-medium').textContent;
+        sendMessage(text);
+      });
+    });
+
+    // ============== Initialize ==============
+    async function init() {
+      checkHealth();
+      await loadWorkspace();
+      await loadSessionsFromDB();
+
+      if (state.currentThreadId) {
+        await selectSession(state.currentThreadId);
+      } else {
+        startNewChat();
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
+

@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QA Automation Studio — 8-Bit Retro</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Fonts: Press Start 2P (pixel display) & JetBrains Mono (body/code) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Markdown & Code Highlighting (custom phosphor token colors below) -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            // 8-bit Retro Terminal palette (DESIGN.md) mapped onto the base token names
+            brand: {
+              DEFAULT: '#FFB200',   // accent amber — CTAs & interactive elements
+              hover: '#e39f00',     // ~8% darken
+              glow: 'rgba(255, 178, 0, 0.2)',
+              border: 'rgba(255, 178, 0, 0.4)',
+            },
+            dark: {
+              bg: '#050505',        // primary background (off-black, never pure #000)
+              surface: '#0a120c',   // green-tinted panel
+              elevated: '#101d12',
+              border: '#1e4628',
+              muted: '#142e1c',
+            },
+            txt: {
+              main: '#2CFF56',      // green phosphor text
+              muted: '#1cd44b',
+              subtle: '#149c3a',
+            },
+            // Semantic overrides so inline classes in JS render on-palette
+            emerald: { 400: '#2CFF56', 500: '#22e04d' },
+            amber: { 400: '#FFB200', 500: '#FFB200' },
+            red: { 400: '#FF0000', 500: '#FF0000' },
+          },
+          fontFamily: {
+            pixel: ['"Press Start 2P"', 'monospace'],
+            sans: ['"Press Start 2P"', 'monospace'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          boxShadow: {
+            'glow': '0 0 12px rgba(44, 255, 86, 0.25)',
+            'card-glow': '0 4px 16px rgba(0, 0, 0, 0.6)',
+            'amber-glow': '0 4px 12px rgba(255, 178, 0, 0.25)',
+          },
+        },
+      },
+    }
+  </script>
+
+  <style>
+    /* ============== 8-Bit Retro Terminal ============== */
+    body {
+      background-color: #050505;
+      color: #2CFF56;
+      font-family: 'JetBrains Mono', monospace;
+      overflow: hidden;
+    }
+
+    /* Phosphor glow on headline text */
+    .phosphor { text-shadow: 0 0 8px rgba(44, 255, 86, 0.45); }
+
+    /* Ambient background: faint pixel grid + top phosphor bloom */
+    .bg-ambient {
+      background:
+        radial-gradient(circle at 50% 0%, rgba(44, 255, 86, 0.07) 0%, transparent 55%),
+        repeating-linear-gradient(0deg, rgba(44, 255, 86, 0.02) 0 1px, transparent 1px 32px),
+        repeating-linear-gradient(90deg, rgba(44, 255, 86, 0.02) 0 1px, transparent 1px 32px);
+    }
+
+    /* CRT scanlines — fixed overlay, pointer-events off (z: toast tier) */
+    .crt-scanlines {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 500;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.28) 0px,
+        rgba(0, 0, 0, 0.28) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+    }
+
+    /* Slow rolling scan band (classic CRT beam). Transform-only animation. */
+    .crt-roll {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 120px;
+      pointer-events: none;
+      z-index: 499;
+      background: linear-gradient(180deg, transparent, rgba(44, 255, 86, 0.05) 50%, transparent);
+      animation: crt-roll 9s linear infinite;
+    }
+    @keyframes crt-roll {
+      from { transform: translateY(-140px); }
+      to   { transform: translateY(100dvh); }
+    }
+
+    /* Subtle screen flicker — barely perceptible, per motion 4/10 */
+    .crt-flicker { animation: crt-flicker 5s infinite; }
+    @keyframes crt-flicker {
+      0%, 91%, 94%, 100% { opacity: 1; }
+      92% { opacity: 0.97; }
+      93% { opacity: 0.99; }
+    }
+
+    /* Block cursor blink */
+    @keyframes blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+    .blink { animation: blink 1.1s steps(1) infinite; }
+
+    /* Entry animation: fade + translateY 16px -> 0, 420ms ease-out */
+    @keyframes entry {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-msg { animation: entry 0.42s ease-out backwards; }
+
+    /* Session list staggered cascade: 80ms between items */
+    .session-item { animation: entry 0.42s ease-out backwards; }
+    .session-item:nth-child(1) { animation-delay: 0ms; }
+    .session-item:nth-child(2) { animation-delay: 80ms; }
+    .session-item:nth-child(3) { animation-delay: 160ms; }
+    .session-item:nth-child(4) { animation-delay: 240ms; }
+    .session-item:nth-child(5) { animation-delay: 320ms; }
+    .session-item:nth-child(6) { animation-delay: 400ms; }
+    .session-item:nth-child(n+7) { animation-delay: 480ms; }
+
+    /* 8-bit loading dots — square, blinking, staggered */
+    @keyframes dot-blink {
+      0%, 100% { opacity: 0.2; }
+      50% { opacity: 1; }
+    }
+    .pulse-dot { animation: dot-blink 1s infinite; }
+    .pulse-dot:nth-child(1) { animation-delay: 0s; }
+    .pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+    .pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    /* Focus ring: 2px accent, offset 2px */
+    :focus-visible {
+      outline: 2px solid #FFB200;
+      outline-offset: 2px;
+    }
+
+    /* Pixel-art invader — box-shadow sprite, 11x8 @ 4px per pixel */
+    .pixel-invader {
+      display: inline-block;
+      width: 4px;
+      height: 4px;
+      background: transparent;
+      color: #2CFF56;
+      box-shadow:
+        8px 0, 32px 0,
+        12px 4px, 28px 4px,
+        8px 8px, 12px 8px, 16px 8px, 20px 8px, 24px 8px, 28px 8px, 32px 8px,
+        4px 12px, 8px 12px, 16px 12px, 20px 12px, 24px 12px, 32px 12px, 36px 12px,
+        0 16px, 4px 16px, 8px 16px, 12px 16px, 16px 16px, 20px 16px, 24px 16px, 28px 16px, 32px 16px, 36px 16px, 40px 16px,
+        4px 20px, 12px 20px, 16px 20px, 20px 20px, 24px 20px, 28px 20px, 32px 20px, 40px 20px,
+        4px 24px, 12px 24px, 32px 24px, 36px 24px,
+        12px 28px, 16px 28px, 24px 28px, 28px 28px;
+      filter: drop-shadow(0 0 4px rgba(44, 255, 86, 0.6));
+    }
+
+    /* ============== Markdown (class name kept for JS parity) ============== */
+    .prose-dark {
+      color: #c4ffb0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      line-height: 1.7;
+    }
+    .prose-dark p { margin-bottom: 0.75rem; }
+    .prose-dark p:last-child { margin-bottom: 0; }
+    .prose-dark h1, .prose-dark h2, .prose-dark h3, .prose-dark h4 {
+      font-family: 'Press Start 2P', monospace;
+      color: #2CFF56;
+      font-weight: 400;
+      font-size: 0.75rem;
+      line-height: 1.6;
+      text-shadow: 0 0 6px rgba(44, 255, 86, 0.4);
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    .prose-dark ul {
+      list-style-type: square;
+      padding-left: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .prose-dark ol {
+      list-style-type: decimal;
+      padding-left: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .prose-dark li { margin-bottom: 0.25rem; }
+    .prose-dark code:not(pre code) {
+      background: #101d12;
+      color: #FFB200;
+      padding: 0.15rem 0.4rem;
+      border: 1px solid #1e4628;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8em;
+    }
+    .prose-dark pre {
+      background: #050505 !important;
+      border: 2px solid #1e4628;
+      border-radius: 8px;
+      margin: 0.75rem 0;
+      overflow: hidden;
+    }
+    .prose-dark pre code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      padding: 1rem !important;
+      display: block;
+      overflow-x: auto;
+      color: #2CFF56;
+    }
+    .prose-dark table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+      font-size: 0.75rem;
+    }
+    .prose-dark th {
+      background-color: #101d12;
+      color: #FFFFFF;
+      font-family: 'Press Start 2P', monospace;
+      font-weight: 400;
+      font-size: 0.6rem;
+      text-align: left;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid #1e4628;
+    }
+    .prose-dark td {
+      padding: 0.5rem 0.8rem;
+      border: 1px solid #1e4628;
+    }
+    .prose-dark tr:nth-child(even) {
+      background-color: rgba(16, 29, 18, 0.4);
+    }
+    .prose-dark a { color: #FFB200; text-decoration: underline; }
+    .prose-dark strong { color: #2CFF56; }
+    .prose-dark blockquote {
+      border-left: 4px solid #FFB200;
+      padding-left: 1rem;
+      color: #9ff0b3;
+      margin: 0.75rem 0;
+    }
+
+    /* ============== highlight.js — phosphor tokens ============== */
+    .hljs { background: transparent; color: #2CFF56; }
+    .hljs-comment, .hljs-quote { color: #149c3a; font-style: italic; }
+    .hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-literal { color: #FFB200; }
+    .hljs-string, .hljs-regexp, .hljs-attr { color: #FFD700; }
+    .hljs-number, .hljs-built_in, .hljs-type { color: #FFB200; }
+    .hljs-title, .hljs-title.function_, .hljs-section { color: #FFFFFF; }
+    .hljs-name, .hljs-tag { color: #2CFF56; }
+    .hljs-variable, .hljs-params, .hljs-selector-class, .hljs-selector-id { color: #c4ffb0; }
+    .hljs-meta, .hljs-deletion { color: #FF0000; }
+    .hljs-addition { color: #2CFF56; }
+  </style>
+</head>
+<body class="bg-dark-bg text-txt-main h-[100dvh] flex flex-col antialiased selection:bg-brand selection:text-white crt-flicker">
+
+  <!-- CRT overlays -->
+  <div class="crt-roll"></div>
+  <div class="crt-scanlines"></div>
+
+  <div class="flex h-full w-full bg-ambient relative">
+
+    <!-- Sidebar (z: base tier) -->
+    <aside id="sidebar" class="w-64 bg-dark-surface/90 border-r-2 border-dark-border flex flex-col shrink-0 transition-all duration-300 z-10">
+
+      <!-- App Brand -->
+      <div class="p-4 border-b-2 border-dark-border flex items-center gap-3">
+        <div class="w-9 h-9 bg-brand text-dark-bg flex items-center justify-center">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="font-pixel text-[10px] text-white phosphor leading-5">QA AUTOMATION</h1>
+          <p class="font-mono text-[9px] text-txt-subtle mt-1.5 tracking-widest">AGENT OS v1.0 <span class="blink text-brand">█</span></p>
+        </div>
+      </div>
+
+      <!-- Action Button -->
+      <div class="p-3">
+        <button id="new-chat-btn" class="w-full bg-brand hover:bg-brand-hover text-dark-bg font-pixel text-[10px] py-3 px-4 flex items-center justify-center gap-2 transition-all duration-200 hover:shadow-amber-glow active:translate-y-px active:shadow-none">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          <span>NEW CONVERSATION</span>
+        </button>
+      </div>
+
+      <!-- Sessions List Title -->
+      <div class="px-4 py-2 flex items-center justify-between font-pixel text-[9px] text-txt-subtle tracking-wider">
+        <span>&gt; RECENT RUNS</span>
+        <button id="clear-all-sessions-btn" title="Clear all local history" class="hover:text-red-400 transition-colors duration-200">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Session List Container -->
+      <div id="session-list" class="flex-1 overflow-y-auto px-2 space-y-1">
+        <div id="sessions-container"></div>
+      </div>
+
+      <!-- Sidebar Footer: Token Usage & Status -->
+      <div class="p-3 border-t-2 border-dark-border bg-dark-bg/60 text-[11px] space-y-2">
+        <div id="session-token-card" class="bg-dark-surface border-2 border-dark-border rounded-lg p-2.5 font-mono text-[10px] space-y-1.5">
+          <div class="flex items-center justify-between font-pixel text-[8px] text-txt-subtle border-b border-dark-border/40 pb-1.5">
+            <span>TOKENS</span>
+            <span id="session-total-tokens" class="text-brand font-bold">0</span>
+          </div>
+          <div class="flex items-center justify-between text-txt-subtle">
+            <span>PROMPT: <strong id="session-input-tokens" class="text-txt-muted">0</strong></span>
+            <span>COMPLETION: <strong id="session-output-tokens" class="text-txt-muted">0</strong></span>
+          </div>
+          <div class="flex items-center justify-between text-txt-subtle border-t border-dark-border/30 pt-1">
+            <span class="flex items-center gap-1">CONTEXT: <strong id="session-context-tokens" class="text-amber-400">0</strong></span>
+            <span class="text-[8px] text-txt-subtle/70 italic">NEXT PROMPT</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="font-pixel text-[8px] text-txt-muted flex items-center gap-1.5">
+            <span class="w-2 h-2 bg-txt-main animate-pulse"></span>
+            SYS READY
+          </span>
+          <span id="connection-status" class="font-mono text-[9px] px-2 py-1 rounded bg-dark-elevated text-txt-muted border border-dark-border">CHECKING...</span>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 flex flex-col min-w-0 h-full relative">
+
+      <!-- Top Mobile Navigation (z: sticky-nav tier) -->
+      <div class="lg:hidden flex items-center justify-between p-3 border-b-2 border-dark-border bg-dark-surface/90 z-[100]">
+        <div class="flex items-center gap-3">
+          <button id="menu-toggle" class="p-2 text-txt-muted hover:text-white rounded-lg bg-dark-elevated border border-dark-border">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+          </button>
+          <span class="font-pixel text-[10px] text-white phosphor">QA AGENT</span>
+        </div>
+      </div>
+
+      <!-- Chat Messages Scroll Container -->
+      <div id="messages-container" class="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6 max-w-4xl w-full mx-auto">
+
+        <!-- Empty State -->
+        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center my-auto py-12">
+          <div class="mb-8 h-12 flex items-end">
+            <span class="pixel-invader"></span>
+          </div>
+          <h2 class="font-pixel text-sm text-white phosphor leading-7 mb-5">HOW CAN I ASSIST<br>YOUR TESTING TODAY?</h2>
+          <p class="font-mono text-xs text-txt-muted max-w-md mb-8 leading-relaxed">
+            INSPECT WEB WORKFLOWS. GENERATE AUTOMATION SCRIPTS. EXECUTE MULTI-STEP RECORDINGS. ANSWER SKILL QUERIES.
+          </p>
+
+          <!-- Prompt Cards (2-up, not 3-equal) -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
+            <button class="prompt-chip text-left p-4 rounded-lg bg-dark-surface hover:bg-dark-elevated border-2 border-dark-border hover:border-brand transition-all duration-200 group">
+              <div class="font-medium font-pixel text-[10px] text-txt-main group-hover:text-brand mb-2 leading-4">WHAT SKILLS DO YOU HAVE?</div>
+              <div class="font-mono text-[10px] text-txt-subtle">LIST ALL INSTALLED AUTOMATION CAPABILITIES</div>
+            </button>
+            <button class="prompt-chip text-left p-4 rounded-lg bg-dark-surface hover:bg-dark-elevated border-2 border-dark-border hover:border-brand transition-all duration-200 group">
+              <div class="font-medium font-pixel text-[10px] text-txt-main group-hover:text-brand mb-2 leading-4">AUTOMATE LOGIN FLOW</div>
+              <div class="font-mono text-[10px] text-txt-subtle">CREATE AUTO-RECORDING WEB INTERACTION TEST</div>
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Floating Input Container — terminal frame -->
+      <div class="p-4 lg:p-6 w-full max-w-4xl mx-auto shrink-0">
+        <div class="relative rounded-lg bg-dark-surface/95 border-2 border-dark-border focus-within:border-brand shadow-card-glow transition-all duration-200">
+
+          <!-- Terminal title bar -->
+          <div class="flex items-center justify-between px-3 py-2 border-b border-dark-border/60">
+            <span class="font-pixel text-[9px] text-brand">PROMPT<span class="blink">_</span></span>
+            <span class="font-mono text-[9px] text-txt-subtle">MODE: AGENT</span>
+          </div>
+
+          <textarea
+            id="message-input"
+            rows="1"
+            placeholder="ASK QA AGENT TO AUTOMATE A WORKFLOW..."
+            class="w-full bg-transparent px-3 pt-2 pb-2 text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-48 font-mono leading-relaxed block overflow-y-auto"
+            style="caret-color: #2CFF56;"
+          ></textarea>
+
+          <div class="flex items-center justify-between px-3 py-2 border-t border-dark-border/60 text-[10px] text-txt-subtle">
+            <div class="flex items-center gap-2 font-mono">
+              <span class="px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">SHIFT + ENTER</span> NEW LINE
+            </div>
+
+            <button
+              id="send-btn"
+              disabled
+              class="bg-brand hover:bg-brand-hover text-dark-bg font-pixel text-[10px] px-4 py-2 rounded-lg flex items-center gap-1.5 transition-all duration-200 disabled:opacity-40 disabled:hover:bg-brand hover:shadow-amber-glow active:translate-y-px active:shadow-none"
+            >
+              <span>SEND</span>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+              </svg>
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // ============== Setup Markdown Renderer ==============
+    marked.setOptions({
+      highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+      },
+      breaks: true
+    });
+
+    // ============== State Management ==============
+    const state = {
+      currentThreadId: localStorage.getItem('qa-chat-current-thread') || null,
+      sessions: [],
+      messages: {},
+      isStreaming: false,
+      abortController: null,
+    };
+
+    function setCurrentThread(threadId) {
+      state.currentThreadId = threadId;
+      if (threadId) {
+        localStorage.setItem('qa-chat-current-thread', threadId);
+      } else {
+        localStorage.removeItem('qa-chat-current-thread');
+      }
+    }
+
+    function getSessionMessages(threadId) {
+      return state.messages[threadId] || [];
+    }
+
+    // ============== Elements Reference ==============
+    const el = {
+      sidebar: document.getElementById('sidebar'),
+      sessionList: document.getElementById('sessions-container'),
+      messagesContainer: document.getElementById('messages-container'),
+      emptyState: document.getElementById('empty-state'),
+      messageInput: document.getElementById('message-input'),
+      sendBtn: document.getElementById('send-btn'),
+      newChatBtn: document.getElementById('new-chat-btn'),
+      clearAllBtn: document.getElementById('clear-all-sessions-btn'),
+      menuToggle: document.getElementById('menu-toggle'),
+      connectionStatus: document.getElementById('connection-status'),
+      sessionTotalTokens: document.getElementById('session-total-tokens'),
+      sessionInputTokens: document.getElementById('session-input-tokens'),
+      sessionOutputTokens: document.getElementById('session-output-tokens'),
+      sessionContextTokens: document.getElementById('session-context-tokens'),
+    };
+
+    // ============== Health Check ==============
+    async function checkHealth() {
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        if (data.status === 'ok') {
+          el.connectionStatus.textContent = 'AGENT ONLINE';
+          el.connectionStatus.className = 'font-mono text-[9px] px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30';
+        } else {
+          el.connectionStatus.textContent = 'DEGRADED';
+          el.connectionStatus.className = 'font-mono text-[9px] px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30';
+        }
+      } catch (e) {
+        el.connectionStatus.textContent = 'OFFLINE';
+        el.connectionStatus.className = 'font-mono text-[9px] px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/30';
+      }
+    }
+
+    // ============== Streaming Logic ==============
+    async function* streamChat(message, threadId, signal) {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, thread_id: threadId }),
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned error ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (const part of parts) {
+            const lines = part.split('\n');
+            let currentEvent = null;
+            let eventData = null;
+
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
+                try {
+                  eventData = JSON.parse(line.slice(6).trim());
+                } catch (e) {}
+              }
+            }
+
+            if (currentEvent && eventData !== null) {
+              yield { event: currentEvent, data: eventData };
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    // ============== Render Functions ==============
+    function renderSessions() {
+      if (state.sessions.length === 0) {
+        el.sessionList.innerHTML = `
+          <div class="px-3 py-6 text-center font-mono text-xs text-txt-subtle border border-dashed border-dark-border rounded-lg my-2">
+            NO HISTORY YET
+          </div>
+        `;
+        return;
+      }
+
+      el.sessionList.innerHTML = state.sessions.map(s => {
+        const isActive = s.thread_id === state.currentThreadId;
+        const titleText = s.first_message && s.first_message !== s.thread_id ? s.first_message : 'New conversation';
+        return `
+          <div class="session-item group px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-200 flex items-center justify-between ${isActive ? 'bg-dark-elevated border-2 border-brand text-white' : 'hover:bg-dark-elevated/60 text-txt-muted hover:text-txt-main border-2 border-transparent'}" data-thread-id="${s.thread_id}">
+            <div class="flex-1 min-w-0 pr-2">
+              <div class="font-medium font-mono text-xs truncate text-txt-main">&gt; ${escapeHtml(titleText)}</div>
+              <div class="font-mono text-[9px] text-txt-subtle/80 truncate mt-1">${s.thread_id}</div>
+            </div>
+            <button class="delete-session-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity duration-200" data-thread-id="${s.thread_id}" title="Delete session">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      // Add Click Listeners
+      el.sessionList.querySelectorAll('.session-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.closest('.delete-session-btn')) return;
+          selectSession(item.dataset.threadId);
+        });
+      });
+
+      el.sessionList.querySelectorAll('.delete-session-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteSession(btn.dataset.threadId);
+        });
+      });
+    }
+
+    function renderMessageNode(msg) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg w-full';
+
+      if (msg.type === 'human') {
+        wrapper.innerHTML = `
+          <div class="flex justify-end mb-4">
+            <div class="bg-dark-elevated border-2 border-dark-border text-white font-mono text-xs rounded-lg px-4 py-3 max-w-[80%]">
+              ${escapeHtml(msg.content)}
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'ai') {
+        const parsedContent = marked.parse(msg.content || '');
+        const usageBadge = msg.usage ? `
+          <div class="mt-3 pt-2 border-t border-dark-border/60 flex items-center gap-3 font-mono text-[10px] text-txt-subtle">
+            <span title="Input tokens">IN: <strong class="text-txt-muted">${msg.usage.input_tokens || 0}</strong></span>
+            <span title="Output tokens">OUT: <strong class="text-txt-muted">${msg.usage.output_tokens || 0}</strong></span>
+            <span title="Total tokens">TOTAL: <strong class="text-brand">${msg.usage.total_tokens || 0}</strong></span>
+          </div>
+        ` : '';
+
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-6">
+            <div class="w-7 h-7 bg-brand/20 border-2 border-brand-border flex items-center justify-center shrink-0 mt-0.5 text-brand">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-dark-surface border-2 border-dark-border rounded-lg px-5 py-4 max-w-[90%] shadow-card-glow prose-dark">
+              ${parsedContent}
+              ${usageBadge}
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'thinking') {
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-4">
+            <div class="w-7 h-7 bg-dark-elevated border-2 border-dark-border flex items-center justify-center shrink-0 mt-0.5 text-txt-subtle">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-dark-surface/60 border-2 border-dark-border/60 rounded-lg px-4 py-3 max-w-[90%] font-mono text-xs">
+              <details class="group">
+                <summary class="flex items-center justify-between cursor-pointer text-txt-muted hover:text-white select-none">
+                  <span class="font-pixel text-[9px] flex items-center gap-2">
+                    <span>THOUGHT PROCESS</span>
+                  </span>
+                  <svg class="w-4 h-4 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </summary>
+                <div class="mt-2.5 pt-2.5 border-t border-dark-border text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px]">
+                  ${escapeHtml(msg.content)}
+                </div>
+              </details>
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'tool_call') {
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-3">
+            <div class="w-7 h-7 bg-amber-500/10 border-2 border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5 text-amber-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-dark-surface border-2 border-amber-500/20 rounded-lg px-3.5 py-2.5 max-w-[90%] font-mono text-xs">
+              <div class="flex items-center gap-2 text-amber-400 font-medium text-[10px]">
+                <span>TOOL INVOKED:</span>
+                <span class="bg-amber-500/10 px-1.5 py-0.5 border border-amber-500/20 text-white">${escapeHtml(msg.name)}</span>
+              </div>
+              ${msg.input ? `<pre class="mt-2 text-[11px] text-txt-subtle overflow-x-auto bg-dark-bg p-2 rounded border border-dark-border">${escapeHtml(formatJson(msg.input))}</pre>` : ''}
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'tool_result') {
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-4">
+            <div class="w-7 h-7 bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center shrink-0 mt-0.5 text-emerald-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-dark-surface border-2 border-emerald-500/20 rounded-lg px-3.5 py-2.5 max-w-[90%] font-mono text-xs">
+              <details>
+                <summary class="cursor-pointer flex items-center justify-between text-emerald-400 font-medium text-[10px] select-none">
+                  <span>TOOL RESULT: ${escapeHtml(msg.name)}</span>
+                  <span class="text-[10px] text-txt-subtle hover:text-white">VIEW OUTPUT</span>
+                </summary>
+                <pre class="mt-2 text-[11px] text-txt-muted overflow-x-auto bg-dark-bg p-2.5 rounded border border-dark-border max-h-60">${escapeHtml(formatJson(msg.content))}</pre>
+              </details>
+            </div>
+          </div>
+        `;
+      }
+
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    // Persistent Loading Bar State Control
+    let activeLoadingNode = null;
+
+    function showLoadingIndicator() {
+      if (activeLoadingNode) return;
+
+      activeLoadingNode = document.createElement('div');
+      activeLoadingNode.id = 'active-loader';
+      activeLoadingNode.className = 'animate-msg flex items-center gap-3 mb-4';
+      activeLoadingNode.innerHTML = `
+        <div class="w-7 h-7 bg-brand/20 border-2 border-brand-border flex items-center justify-center shrink-0 text-brand">
+          <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </div>
+        <div class="bg-dark-surface border-2 border-dark-border rounded-lg px-4 py-2.5 flex items-center gap-2">
+          <span class="flex gap-1 items-center">
+            <span class="w-1.5 h-1.5 bg-brand pulse-dot"></span>
+            <span class="w-1.5 h-1.5 bg-brand pulse-dot"></span>
+            <span class="w-1.5 h-1.5 bg-brand pulse-dot"></span>
+          </span>
+          <span class="font-mono text-xs text-txt-muted">AGENT IS PROCESSING...</span>
+        </div>
+      `;
+      el.messagesContainer.appendChild(activeLoadingNode);
+      scrollToBottom();
+    }
+
+    function hideLoadingIndicator() {
+      if (activeLoadingNode) {
+        activeLoadingNode.remove();
+        activeLoadingNode = null;
+      }
+    }
+
+    function showError(message) {
+      hideLoadingIndicator();
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg flex justify-start mb-4';
+      wrapper.innerHTML = `
+        <div class="bg-red-500/10 border-2 border-red-500/30 rounded-lg px-4 py-3 max-w-[85%] font-mono text-xs text-red-400">
+          <span class="font-pixel text-[9px] block mb-2">EXECUTION ERROR</span>
+          ${escapeHtml(message)}
+        </div>
+      `;
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    // ============== Utilities ==============
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function formatJson(val) {
+      if (typeof val === 'object') return JSON.stringify(val, null, 2);
+      try {
+        return JSON.stringify(JSON.parse(val), null, 2);
+      } catch {
+        return String(val);
+      }
+    }
+
+    let _scrollRafPending = false;
+    function scrollToBottom() {
+      if (_scrollRafPending) return;
+      _scrollRafPending = true;
+      requestAnimationFrame(() => {
+        el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+        _scrollRafPending = false;
+      });
+    }
+
+    function updateSessionTokensWidget() {
+      if (!state.currentThreadId) {
+        if (el.sessionTotalTokens) el.sessionTotalTokens.textContent = '0';
+        if (el.sessionInputTokens) el.sessionInputTokens.textContent = '0';
+        if (el.sessionOutputTokens) el.sessionOutputTokens.textContent = '0';
+        if (el.sessionContextTokens) el.sessionContextTokens.textContent = '0';
+        return;
+      }
+      const msgs = getSessionMessages(state.currentThreadId);
+      let inp = 0, out = 0, tot = 0, context = 0;
+      for (const m of msgs) {
+        if (m.usage) {
+          inp += m.usage.input_tokens || 0;
+          out += m.usage.output_tokens || 0;
+          tot += m.usage.total_tokens || 0;
+          // Context = latest (max) input_tokens — what the next prompt will receive
+          context = Math.max(context, m.usage.input_tokens || 0);
+        }
+      }
+      if (el.sessionTotalTokens) el.sessionTotalTokens.textContent = tot.toLocaleString();
+      if (el.sessionInputTokens) el.sessionInputTokens.textContent = inp.toLocaleString();
+      if (el.sessionOutputTokens) el.sessionOutputTokens.textContent = out.toLocaleString();
+      if (el.sessionContextTokens) el.sessionContextTokens.textContent = context.toLocaleString();
+    }
+
+    // ============== API Interactions ==============
+    async function loadSessionsFromDB() {
+      try {
+        const res = await fetch('/api/sessions');
+        if (!res.ok) return;
+        const data = await res.json();
+        state.sessions = data.sessions || [];
+        renderSessions();
+      } catch (e) {
+        console.error('Failed to load sessions:', e);
+      }
+    }
+
+    async function selectSession(threadId) {
+      setCurrentThread(threadId);
+      renderSessions();
+
+      el.messagesContainer.innerHTML = '';
+      showLoadingIndicator();
+
+      try {
+        const res = await fetch(`/api/sessions/${threadId}/messages`);
+        hideLoadingIndicator();
+
+        if (res.ok) {
+          const data = await res.json();
+          state.messages[threadId] = data.messages || [];
+
+          if (state.messages[threadId].length === 0) {
+            el.emptyState.style.display = 'flex';
+            el.messagesContainer.appendChild(el.emptyState);
+          } else {
+            el.emptyState.style.display = 'none';
+            for (const msg of state.messages[threadId]) {
+              renderMessageNode(msg);
+            }
+          }
+        }
+      } catch (e) {
+        hideLoadingIndicator();
+        showError('Failed to load session messages from server.');
+      }
+      updateSessionTokensWidget();
+    }
+
+    function startNewChat() {
+      // Abort any in-progress stream
+      if (state.abortController) {
+        state.abortController.abort();
+        state.abortController = null;
+        state.isStreaming = false;
+      }
+      setCurrentThread(null);
+      renderSessions();
+      el.messagesContainer.innerHTML = '';
+      el.messagesContainer.appendChild(el.emptyState);
+      el.emptyState.style.display = 'flex';
+      updateSessionTokensWidget();
+      el.messageInput.focus();
+    }
+
+    async function deleteSession(threadId) {
+      try {
+        await fetch(`/api/sessions/${threadId}`, { method: 'DELETE' });
+      } catch (e) {}
+
+      state.sessions = state.sessions.filter(s => s.thread_id !== threadId);
+      delete state.messages[threadId];
+
+      if (state.currentThreadId === threadId) {
+        startNewChat();
+      } else {
+        renderSessions();
+      }
+    }
+
+    async function clearAllSessions() {
+      if (!confirm('Clear all conversation history?')) return;
+      try {
+        await fetch('/api/sessions', { method: 'DELETE' });
+      } catch (e) {
+        console.error('Failed to bulk delete sessions:', e);
+      }
+      state.sessions = [];
+      state.messages = {};
+      startNewChat();
+    }
+
+    async function sendMessage(overrideText = null) {
+      const text = (overrideText || el.messageInput.value).trim();
+      if (!text || state.isStreaming) return;
+
+      el.messageInput.value = '';
+      el.messageInput.style.height = 'auto';
+      el.sendBtn.disabled = true;
+      state.isStreaming = true;
+
+      // Hide empty screen
+      el.emptyState.style.display = 'none';
+
+      // Ensure thread ID
+      if (!state.currentThreadId) {
+        state.currentThreadId = `session-${Date.now().toString(36)}`;
+      }
+
+      // Add user message node
+      const userMsg = { type: 'human', content: text };
+      renderMessageNode(userMsg);
+      if (!state.messages[state.currentThreadId]) {
+        state.messages[state.currentThreadId] = [];
+      }
+      state.messages[state.currentThreadId].push(userMsg);
+
+      // Save session item preview
+      const sessionIndex = state.sessions.findIndex(s => s.thread_id === state.currentThreadId);
+      if (sessionIndex === -1) {
+        state.sessions.unshift({
+          thread_id: state.currentThreadId,
+          first_message: text.substring(0, 45),
+          updated_at: new Date().toISOString()
+        });
+      } else {
+        state.sessions[sessionIndex].updated_at = new Date().toISOString();
+      }
+      renderSessions();
+
+      // Show loader
+      showLoadingIndicator();
+
+      // Create AbortController for cancellation support
+      state.abortController = new AbortController();
+
+      try {
+        let activeAiWrapper = null;
+        let activeAiTextEl = null;
+        let activeThinkingTextEl = null;
+
+        for await (const { event, data } of streamChat(text, state.currentThreadId, state.abortController.signal)) {
+          if (event === 'message') {
+            if (data.type === 'human') continue;
+
+            hideLoadingIndicator();
+
+            if (data.type === 'text_delta') {
+              if (!activeAiWrapper) {
+                activeAiWrapper = document.createElement('div');
+                activeAiWrapper.className = 'animate-msg w-full flex items-start gap-3 mb-6';
+                activeAiWrapper.innerHTML = `
+                  <div class="w-7 h-7 bg-brand/20 border-2 border-brand-border flex items-center justify-center shrink-0 mt-0.5 text-brand">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                  </div>
+                  <div class="flex-1 bg-dark-surface border-2 border-dark-border rounded-lg px-5 py-4 max-w-[90%] shadow-card-glow prose-dark ai-content-body">
+                  </div>
+                `;
+                activeAiTextEl = activeAiWrapper.querySelector('.ai-content-body');
+                activeAiTextEl.dataset.raw = '';
+                el.messagesContainer.appendChild(activeAiWrapper);
+              }
+
+              activeAiTextEl.dataset.raw += data.content;
+              // Debounce markdown re-rendering with requestAnimationFrame
+              if (!activeAiTextEl._rafPending) {
+                activeAiTextEl._rafPending = true;
+                requestAnimationFrame(() => {
+                  activeAiTextEl.innerHTML = marked.parse(activeAiTextEl.dataset.raw);
+                  activeAiTextEl._rafPending = false;
+                  scrollToBottom();
+                });
+              }
+            }
+            else if (data.type === 'thinking_delta') {
+              if (!activeThinkingTextEl) {
+                const thinkWrapper = document.createElement('div');
+                thinkWrapper.className = 'animate-msg w-full flex items-start gap-3 mb-4';
+                thinkWrapper.innerHTML = `
+                  <div class="w-7 h-7 bg-dark-elevated border-2 border-dark-border flex items-center justify-center shrink-0 mt-0.5 text-txt-subtle">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    </svg>
+                  </div>
+                  <div class="flex-1 bg-dark-surface/60 border-2 border-dark-border/60 rounded-lg px-4 py-3 max-w-[90%] font-mono text-xs">
+                    <details class="group" open>
+                      <summary class="flex items-center justify-between cursor-pointer text-txt-muted hover:text-white select-none">
+                        <span class="font-pixel text-[9px] flex items-center gap-2">
+                          <span>THOUGHT PROCESS</span>
+                        </span>
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="square" stroke-linejoin="miter" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                      </summary>
+                      <div class="thinking-body mt-2.5 pt-2.5 border-t border-dark-border text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px]"></div>
+                    </details>
+                  </div>
+                `;
+                activeThinkingTextEl = thinkWrapper.querySelector('.thinking-body');
+                el.messagesContainer.appendChild(thinkWrapper);
+              }
+              activeThinkingTextEl.textContent += data.content;
+              scrollToBottom();
+            }
+            else {
+              activeAiWrapper = null;
+              activeAiTextEl = null;
+              activeThinkingTextEl = null;
+              renderMessageNode(data);
+              showLoadingIndicator();
+            }
+          } else if (event === 'done') {
+            hideLoadingIndicator();
+            if (data.thread_id && data.thread_id !== state.currentThreadId) {
+              setCurrentThread(data.thread_id);
+            }
+            if (data.usage) {
+              if (activeAiTextEl) {
+                const usageBadge = document.createElement('div');
+                usageBadge.className = 'mt-3 pt-2 border-t border-dark-border/60 flex items-center gap-3 font-mono text-[10px] text-txt-subtle';
+                usageBadge.innerHTML = `
+                  <span title="Input tokens">IN: <strong class="text-txt-muted">${data.usage.input_tokens || 0}</strong></span>
+                  <span title="Output tokens">OUT: <strong class="text-txt-muted">${data.usage.output_tokens || 0}</strong></span>
+                  <span title="Total tokens">TOTAL: <strong class="text-brand">${data.usage.total_tokens || 0}</strong></span>
+                `;
+                activeAiTextEl.appendChild(usageBadge);
+              }
+
+              // Update token stats directly in memory without extra API requests
+              if (!state.messages[state.currentThreadId]) {
+                state.messages[state.currentThreadId] = [];
+              }
+              state.messages[state.currentThreadId].push({ usage: data.usage });
+              updateSessionTokensWidget();
+            }
+            await loadSessionsFromDB();
+          } else if (event === 'error') {
+            showError(data.message || 'Stream processing failed');
+          }
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          showError(err.message || 'Failed to communicate with agent server');
+        }
+      } finally {
+        hideLoadingIndicator();
+        state.isStreaming = false;
+        state.abortController = null;
+        el.sendBtn.disabled = el.messageInput.value.trim().length === 0;
+        el.messageInput.focus();
+      }
+    }
+
+    // ============== Listeners ==============
+    el.sendBtn.addEventListener('click', () => sendMessage());
+
+    el.messageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    el.messageInput.addEventListener('input', () => {
+      // Auto expand textarea height
+      el.messageInput.style.height = 'auto';
+      el.messageInput.style.height = Math.min(el.messageInput.scrollHeight, 192) + 'px';
+
+      el.sendBtn.disabled = el.messageInput.value.trim().length === 0 || state.isStreaming;
+    });
+
+    el.newChatBtn.addEventListener('click', startNewChat);
+    el.clearAllBtn.addEventListener('click', clearAllSessions);
+
+    el.menuToggle?.addEventListener('click', () => {
+      el.sidebar.classList.toggle('-translate-x-full');
+    });
+
+    document.querySelectorAll('.prompt-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const text = chip.querySelector('.font-medium').textContent;
+        sendMessage(text);
+      });
+    });
+
+    // ============== Initialize ==============
+    async function init() {
+      checkHealth();
+      await loadSessionsFromDB();
+
+      if (state.currentThreadId) {
+        await selectSession(state.currentThreadId);
+      } else {
+        startNewChat();
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

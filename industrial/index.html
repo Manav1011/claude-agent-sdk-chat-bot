@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QA Automation · Industrial Workbench</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Fonts: Roboto Condensed & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Markdown & Code Highlighting Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            iron:   { DEFAULT: '#cfd3d6', deep: '#b9bec3' },
+            ink:    '#1f1f1f',
+            amber:  { DEFAULT: '#ffc107', dark: '#e0a800', soft: 'rgba(255,193,7,0.12)', border: 'rgba(255,193,7,0.45)' },
+            rust:   '#8B4513',
+            steel:  { DEFAULT: '#71797E', light: '#d8dbde', deep: '#565c60' },
+            rubber: { DEFAULT: '#2B2B2B', light: '#3a3d41', border: '#4a4e52' },
+          },
+          fontFamily: {
+            sans: ['"Roboto Condensed"', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          borderRadius: {
+            sm: '4px',
+            md: '8px',
+            lg: '12px',
+          },
+          boxShadow: {
+            plate: '0 2px 12px rgba(0,0,0,0.06)',
+            lift:  '0 6px 16px -4px rgba(0,0,0,0.25)',
+          }
+        },
+      },
+    }
+  </script>
+
+  <style>
+    /* Concrete / brushed metal base */
+    body {
+      background-color: #cfd3d6;
+      background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E"),
+        linear-gradient(180deg, rgba(255,255,255,0.40) 0%, rgba(113,121,126,0.10) 55%, rgba(113,121,126,0.30) 100%);
+      background-blend-mode: overlay, normal;
+      color: #1f1f1f;
+      font-family: 'Roboto Condensed', system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    /* Rubber-black brushed panel (sidebar, plates) */
+    .brushed {
+      background-color: #2B2B2B;
+      background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E"),
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 3px);
+    }
+
+    /* Caution stripe tape */
+    .caution {
+      background: repeating-linear-gradient(-45deg, #2B2B2B 0 12px, #ffc107 12px 24px);
+    }
+
+    /* Machine screw head */
+    .screw {
+      position: absolute;
+      width: 9px;
+      height: 9px;
+      border-radius: 9999px;
+      background: radial-gradient(circle at 35% 30%, #eceff1, #a7adb2 45%, #565b5f 75%, #303336 100%);
+      box-shadow: inset 0 -1px 1px rgba(0,0,0,0.5), 0 1px 1px rgba(0,0,0,0.2);
+    }
+    .screw::after {
+      content: '';
+      position: absolute;
+      left: 15%;
+      top: 45%;
+      width: 70%;
+      height: 1px;
+      background: rgba(31,31,31,0.7);
+      transform: rotate(45deg);
+    }
+
+    /* Entry animation: fade + 16px lift, 420ms ease-out */
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-msg {
+      animation: rise 0.42s ease-out forwards;
+    }
+
+    /* Typing dots — transform/opacity only */
+    @keyframes dotPulse {
+      0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+      40% { opacity: 1; transform: scale(1.1); }
+    }
+    .pulse-dot {
+      animation: dotPulse 1.4s infinite ease-in-out both;
+    }
+    .pulse-dot:nth-child(1) { animation-delay: -0.32s; }
+    .pulse-dot:nth-child(2) { animation-delay: -0.16s; }
+
+    /* Markdown inside assistant messages (light plate) */
+    .prose-plate {
+      color: #1f1f1f;
+      font-size: 0.925rem;
+      line-height: 1.6;
+    }
+    .prose-plate p { margin-bottom: 0.75rem; }
+    .prose-plate p:last-child { margin-bottom: 0; }
+    .prose-plate h1, .prose-plate h2, .prose-plate h3, .prose-plate h4 {
+      color: #1f1f1f;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    .prose-plate ul {
+      list-style-type: disc;
+      padding-left: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .prose-plate ol {
+      list-style-type: decimal;
+      padding-left: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .prose-plate li { margin-bottom: 0.25rem; }
+    .prose-plate code:not(pre code) {
+      background: #2B2B2B;
+      color: #ffc107;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.825em;
+    }
+    .prose-plate pre {
+      background: #2B2B2B !important;
+      border: 1px solid #4a4e52;
+      border-radius: 4px;
+      margin: 0.75rem 0;
+      overflow: hidden;
+    }
+    .prose-plate pre code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.825rem;
+      padding: 1rem !important;
+      display: block;
+      overflow-x: auto;
+    }
+    .prose-plate table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+      font-size: 0.85rem;
+    }
+    .prose-plate th {
+      background-color: #b9bec3;
+      color: #1f1f1f;
+      font-weight: 700;
+      text-align: left;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid #71797E;
+    }
+    .prose-plate td {
+      padding: 0.5rem 0.8rem;
+      border: 1px solid #71797E;
+    }
+    .prose-plate tr:nth-child(even) {
+      background-color: rgba(113,121,126,0.12);
+    }
+
+    /* Thin steel scrollbar inside scroll areas */
+    .steel-scroll::-webkit-scrollbar { width: 8px; }
+    .steel-scroll::-webkit-scrollbar-track { background: transparent; }
+    .steel-scroll::-webkit-scrollbar-thumb {
+      background: #71797E;
+      border-radius: 4px;
+      border: 2px solid #cfd3d6;
+    }
+    .steel-scroll { scrollbar-width: thin; scrollbar-color: #71797E transparent; }
+  </style>
+</head>
+<body class="text-ink h-[100dvh] flex flex-col antialiased selection:bg-amber selection:text-rubber">
+
+  <div class="flex h-full w-full relative">
+
+    <!-- ============ Sidebar: rubber-black tool tray ============ -->
+    <aside id="sidebar" class="fixed lg:static inset-y-0 left-0 w-64 brushed border-r border-ink flex flex-col shrink-0 transition-transform duration-300 z-[100] -translate-x-full lg:translate-x-0">
+
+      <!-- Caution tape strip -->
+      <div class="caution h-1.5 w-full shrink-0"></div>
+
+      <!-- App Brand -->
+      <div class="relative p-4 border-b border-rubber-border flex items-center gap-3">
+        <span class="screw top-2 left-2"></span>
+        <span class="screw top-2 right-2"></span>
+        <span class="screw bottom-2 left-2"></span>
+        <span class="screw bottom-2 right-2"></span>
+        <div class="w-9 h-9 rounded-sm bg-amber border border-amber-border flex items-center justify-center text-rubber shadow-plate">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.42 15.17L17.23 19.44a2.12 2.12 0 002.97-.06l1.44-1.44a2.12 2.12 0 00.06-2.97l-4.27-5.81a2.12 2.12 0 00-1.56-.82l-2.62-.14-1.73 1.73.14 2.62c.05.59.31 1.15.76 1.56zM11.42 15.17l-3.15.63-2.62 2.62.63 3.15-4.44.63-1.44 1.44a2.12 2.12 0 002.97 2.97l1.44-1.44.63-4.44 3.15.63 2.62-2.62.63-3.15z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="font-bold text-sm tracking-wide text-iron uppercase">QA Automation</h1>
+          <p class="text-[10px] text-steel uppercase tracking-[0.15em] font-mono">Industrial Workbench</p>
+        </div>
+      </div>
+
+      <!-- Action Button -->
+      <div class="p-3">
+        <button id="new-chat-btn" class="w-full bg-amber hover:bg-amber-dark text-rubber font-semibold text-xs uppercase tracking-wider py-2.5 px-4 rounded-sm flex items-center justify-center gap-2 transition-all duration-200 shadow-plate hover:shadow-lift active:translate-y-px">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          <span>New Conversation</span>
+        </button>
+      </div>
+
+      <!-- Sessions List Title -->
+      <div class="px-4 py-2 flex items-center justify-between text-[11px] font-semibold text-steel uppercase tracking-[0.15em]">
+        <span>Recent Jobs</span>
+        <button id="clear-all-sessions-btn" title="Clear all local history" class="hover:text-amber transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Session List Container -->
+      <div id="session-list" class="steel-scroll flex-1 overflow-y-auto px-2 space-y-1">
+        <div id="sessions-container"></div>
+      </div>
+
+      <!-- Sidebar Footer: token gauge + status -->
+      <div class="p-3 border-t border-rubber-border bg-ink/30 text-[11px] space-y-2">
+        <div id="session-token-card" class="bg-rubber-light/60 border border-rubber-border rounded-sm p-2 font-mono text-[10px] space-y-1.5">
+          <div class="flex items-center justify-between text-steel font-sans text-[10px] font-medium border-b border-rubber-border/60 pb-1 uppercase tracking-wider">
+            <span>Session Tokens</span>
+            <span id="session-total-tokens" class="text-amber font-bold">0</span>
+          </div>
+          <div class="flex items-center justify-between text-steel">
+            <span>Prompt: <strong id="session-input-tokens" class="text-iron-light">0</strong></span>
+            <span>Completion: <strong id="session-output-tokens" class="text-iron-light">0</strong></span>
+          </div>
+          <div class="flex items-center justify-between text-steel border-t border-rubber-border/40 pt-1">
+            <span class="flex items-center gap-1">Context: <strong id="session-context-tokens" class="text-amber">0</strong></span>
+            <span class="text-[9px] text-steel/70 font-sans italic">next prompt input</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-steel flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-amber animate-pulse"></span>
+            System Ready
+          </span>
+          <span id="connection-status" class="font-mono text-[10px] px-2 py-0.5 rounded-sm bg-rubber-light text-steel border border-rubber-border">Checking...</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ Main Workspace ============ -->
+    <main class="flex-1 flex flex-col min-w-0 h-full relative">
+
+      <!-- Mobile top bar -->
+      <div class="lg:hidden flex items-center justify-between p-3 border-b border-steel/50 bg-rubber">
+        <div class="flex items-center gap-3">
+          <button id="menu-toggle" class="p-2 text-iron hover:text-amber rounded-sm bg-rubber-light border border-rubber-border">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+          </button>
+          <span class="font-bold text-sm text-iron uppercase tracking-wide">QA Automation Agent</span>
+        </div>
+      </div>
+
+      <!-- Chat Messages Scroll Container -->
+      <div id="messages-container" class="steel-scroll flex-1 overflow-y-auto p-4 lg:p-6 space-y-6 max-w-4xl w-full mx-auto">
+
+        <!-- Empty State -->
+        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center my-auto py-12">
+          <div class="relative w-16 h-16 rounded-sm bg-steel-light border border-steel flex items-center justify-center mb-5 shadow-plate">
+            <span class="screw top-1.5 left-1.5"></span>
+            <span class="screw top-1.5 right-1.5"></span>
+            <span class="screw bottom-1.5 left-1.5"></span>
+            <span class="screw bottom-1.5 right-1.5"></span>
+            <svg class="w-8 h-8 text-rust" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            </svg>
+          </div>
+          <h2 class="text-2xl font-bold text-ink uppercase tracking-tight mb-2">The bench is set up.</h2>
+          <p class="text-steel-deep text-sm max-w-[72ch] mb-8 leading-relaxed">
+            Point me at a workflow. I inspect web pages, cut automation scripts, run multi-step recordings, and answer skill queries.
+          </p>
+
+          <!-- Prompt Cards -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
+            <button class="prompt-chip text-left p-3.5 rounded-sm bg-steel-light hover:bg-white/70 border border-steel hover:border-rust transition-all duration-200 group shadow-plate">
+              <div class="font-semibold text-xs text-ink group-hover:text-rust mb-1 uppercase tracking-wide">What skills do you have?</div>
+              <div class="text-[11px] text-steel-deep truncate">List all installed automation capabilities</div>
+            </button>
+            <button class="prompt-chip text-left p-3.5 rounded-sm bg-steel-light hover:bg-white/70 border border-steel hover:border-rust transition-all duration-200 group shadow-plate">
+              <div class="font-semibold text-xs text-ink group-hover:text-rust mb-1 uppercase tracking-wide">Automate login flow</div>
+              <div class="text-[11px] text-steel-deep truncate">Create auto-recording web interaction test</div>
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Floating Input Container -->
+      <div class="p-4 lg:p-6 w-full max-w-4xl mx-auto shrink-0">
+        <div class="relative rounded-sm bg-steel-light/95 border border-steel focus-within:border-amber focus-within:ring-2 focus-within:ring-amber focus-within:ring-offset-2 focus-within:ring-offset-iron shadow-plate transition-all duration-200 p-3">
+          <span class="screw top-1.5 left-1.5 hidden sm:block"></span>
+          <span class="screw top-1.5 right-1.5 hidden sm:block"></span>
+
+          <!-- Caution tape accent -->
+          <div class="caution h-1 rounded-full mb-2 -mx-1"></div>
+
+          <textarea
+            id="message-input"
+            rows="1"
+            placeholder="Tell the agent what to build or test..."
+            class="w-full bg-transparent px-2 pt-1 pb-2 text-sm text-ink placeholder-steel focus:outline-none resize-none max-h-48 font-sans leading-relaxed block overflow-y-auto"
+          ></textarea>
+
+          <div class="flex items-center justify-between border-t border-steel/40 pt-2.5 mt-1 text-[11px] text-steel">
+            <div class="flex items-center gap-2 font-mono">
+              <span class="px-1.5 py-0.5 rounded-sm bg-rubber text-iron border border-rubber-border">Shift + Enter</span> for new line
+            </div>
+
+            <button
+              id="send-btn"
+              disabled
+              class="bg-amber hover:bg-amber-dark text-rubber font-semibold text-xs uppercase tracking-wider px-4 py-1.5 rounded-sm flex items-center gap-1.5 transition-all duration-200 disabled:opacity-40 hover:shadow-lift active:translate-y-px"
+            >
+              <span>Send</span>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+              </svg>
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // ============== Setup Markdown Renderer ==============
+    marked.setOptions({
+      highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+      },
+      breaks: true
+    });
+
+    // ============== State Management ==============
+    const state = {
+      currentThreadId: localStorage.getItem('industrial-chat-current-thread') || null,
+      sessions: [],
+      messages: {},
+      isStreaming: false,
+      abortController: null,
+    };
+
+    function setCurrentThread(threadId) {
+      state.currentThreadId = threadId;
+      if (threadId) {
+        localStorage.setItem('industrial-chat-current-thread', threadId);
+      } else {
+        localStorage.removeItem('industrial-chat-current-thread');
+      }
+    }
+
+    function getSessionMessages(threadId) {
+      return state.messages[threadId] || [];
+    }
+
+    // ============== Elements Reference ==============
+    const el = {
+      sidebar: document.getElementById('sidebar'),
+      sessionList: document.getElementById('sessions-container'),
+      messagesContainer: document.getElementById('messages-container'),
+      emptyState: document.getElementById('empty-state'),
+      messageInput: document.getElementById('message-input'),
+      sendBtn: document.getElementById('send-btn'),
+      newChatBtn: document.getElementById('new-chat-btn'),
+      clearAllBtn: document.getElementById('clear-all-sessions-btn'),
+      menuToggle: document.getElementById('menu-toggle'),
+      connectionStatus: document.getElementById('connection-status'),
+      sessionTotalTokens: document.getElementById('session-total-tokens'),
+      sessionInputTokens: document.getElementById('session-input-tokens'),
+      sessionOutputTokens: document.getElementById('session-output-tokens'),
+      sessionContextTokens: document.getElementById('session-context-tokens'),
+    };
+
+    // ============== Health Check ==============
+    async function checkHealth() {
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        if (data.status === 'ok') {
+          el.connectionStatus.textContent = 'Agent Online';
+          el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded-sm bg-amber/15 text-amber border border-amber-border';
+        } else {
+          el.connectionStatus.textContent = 'Degraded';
+          el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded-sm bg-rust/15 text-rust border border-rust/40';
+        }
+      } catch (e) {
+        el.connectionStatus.textContent = 'Offline';
+        el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded-sm bg-red-700/15 text-red-800 border border-red-700/40';
+      }
+    }
+
+    // ============== Streaming Logic ==============
+    async function* streamChat(message, threadId, signal) {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, thread_id: threadId }),
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned error ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (const part of parts) {
+            const lines = part.split('\n');
+            let currentEvent = null;
+            let eventData = null;
+
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
+                try {
+                  eventData = JSON.parse(line.slice(6).trim());
+                } catch (e) {}
+              }
+            }
+
+            if (currentEvent && eventData !== null) {
+              yield { event: currentEvent, data: eventData };
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    // ============== Render Functions ==============
+    function renderSessions() {
+      if (state.sessions.length === 0) {
+        el.sessionList.innerHTML = `
+          <div class="px-3 py-6 text-center text-xs text-steel border border-dashed border-rubber-border rounded-sm my-2">
+            No jobs on the board yet
+          </div>
+        `;
+        return;
+      }
+
+      el.sessionList.innerHTML = state.sessions.map((s, i) => {
+        const isActive = s.thread_id === state.currentThreadId;
+        const titleText = s.first_message && s.first_message !== s.thread_id ? s.first_message : 'New conversation';
+        return `
+          <div class="session-item group px-3 py-2.5 rounded-sm cursor-pointer transition-all duration-200 flex items-center justify animate-msg ${isActive ? 'bg-rubber-light border border-amber text-iron shadow-plate' : 'hover:bg-rubber-light/60 text-steel hover:text-iron border border-transparent'}" data-thread-id="${s.thread_id}" style="animation-delay: ${i * 80}ms">
+            <div class="flex-1 min-w-0 pr-2">
+              <div class="font-semibold text-xs truncate capitalize text-iron">${escapeHtml(titleText)}</div>
+              <div class="font-mono text-[9px] text-steel/80 truncate mt-0.5">${s.thread_id}</div>
+            </div>
+            <button class="delete-session-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity" data-thread-id="${s.thread_id}" title="Delete session">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      // Add Click Listeners
+      el.sessionList.querySelectorAll('.session-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.closest('.delete-session-btn')) return;
+          selectSession(item.dataset.threadId);
+        });
+      });
+
+      el.sessionList.querySelectorAll('.delete-session-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteSession(btn.dataset.threadId);
+        });
+      });
+    }
+
+    function renderMessageNode(msg) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg w-full';
+
+      if (msg.type === 'human') {
+        wrapper.innerHTML = `
+          <div class="flex justify-end mb-4">
+            <div class="brushed text-iron text-sm rounded-sm px-4 py-3 max-w-[80%] shadow-plate border border-ink">
+              ${escapeHtml(msg.content)}
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'ai') {
+        const parsedContent = marked.parse(msg.content || '');
+        const usageBadge = msg.usage ? `
+          <div class="mt-3 pt-2 border-t border-steel/40 flex items-center gap-3 font-mono text-[10px] text-steel">
+            <span title="Input tokens">in: <strong class="text-ink">${msg.usage.input_tokens || 0}</strong></span>
+            <span title="Output tokens">out: <strong class="text-ink">${msg.usage.output_tokens || 0}</strong></span>
+            <span title="Total tokens">total: <strong class="text-rust">${msg.usage.total_tokens || 0}</strong></span>
+          </div>
+        ` : '';
+
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-6">
+            <div class="w-7 h-7 rounded-sm bg-amber/20 border border-amber-border flex items-center justify-center shrink-0 mt-0.5 text-rust">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+              </svg>
+            </div>
+            <div class="relative flex-1 bg-steel-light border border-steel rounded-sm px-5 py-4 max-w-[90%] shadow-plate prose-plate">
+              ${parsedContent}
+              ${usageBadge}
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'thinking') {
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-4">
+            <div class="w-7 h-7 rounded-sm bg-steel-light border border-steel flex items-center justify-center shrink-0 mt-0.5 text-steel-deep">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-steel-light/70 border border-steel/70 rounded-sm px-4 py-3 max-w-[90%] font-mono text-xs">
+              <details class="group">
+                <summary class="flex items-center justify-between cursor-pointer text-steel-deep hover:text-ink select-none">
+                  <span class="font-sans font-semibold text-xs flex items-center gap-2 uppercase tracking-wide">
+                    <span>Thought Process</span>
+                  </span>
+                  <svg class="w-4 h-4 transition-transform group-open:rotate-180 text-steel" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </summary>
+                <div class="mt-2.5 pt-2.5 border-t border-steel/50 text-steel-deep whitespace-pre-wrap leading-relaxed text-[11px]">
+                  ${escapeHtml(msg.content)}
+                </div>
+              </details>
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'tool_call') {
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-3">
+            <div class="w-7 h-7 rounded-sm bg-amber/15 border border-amber-border flex items-center justify-center shrink-0 mt-0.5 text-rust">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.42 15.17L17.23 19.44a2.12 2.12 0 002.97-.06l1.44-1.44a2.12 2.12 0 00.06-2.97l-4.27-5.81a2.12 2.12 0 00-1.56-.82l-2.62-.14-1.73 1.73.14 2.62c.05.59.31 1.15.76 1.56zM11.42 15.17l-3.15.63-2.62 2.62.63 3.15-4.44.63-1.44 1.44a2.12 2.12 0 002.97 2.97l1.44-1.44.63-4.44 3.15.63 2.62-2.62.63-3.15z"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-steel-light border border-amber-border/60 rounded-sm px-3.5 py-2.5 max-w-[90%] font-mono text-xs">
+              <div class="flex items-center gap-2 text-rust font-semibold text-[11px] uppercase tracking-wide">
+                <span>TOOL INVOKED:</span>
+                <span class="bg-amber/20 px-1.5 py-0.5 rounded-sm border border-amber-border text-ink">${escapeHtml(msg.name)}</span>
+              </div>
+              ${msg.input ? `<pre class="mt-2 text-[11px] text-steel-deep overflow-x-auto bg-rubber text-iron p-2 rounded-sm border border-rubber-border">${escapeHtml(formatJson(msg.input))}</pre>` : ''}
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'tool_result') {
+        wrapper.innerHTML = `
+          <div class="flex items-start gap-3 mb-4">
+            <div class="w-7 h-7 rounded-sm bg-rust/10 border border-rust/40 flex items-center justify-center shrink-0 mt-0.5 text-rust">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+            </div>
+            <div class="flex-1 bg-steel-light border border-steel rounded-sm px-3.5 py-2.5 max-w-[90%] font-mono text-xs">
+              <details>
+                <summary class="cursor-pointer flex items-center justify-between text-rust font-semibold text-[11px] uppercase tracking-wide select-none">
+                  <span>TOOL RESULT: ${escapeHtml(msg.name)}</span>
+                  <span class="text-[10px] text-steel font-sans normal-case tracking-normal hover:text-ink">View output</span>
+                </summary>
+                <pre class="mt-2 text-[11px] text-iron overflow-x-auto bg-rubber p-2.5 rounded-sm border border-rubber-border max-h-60">${escapeHtml(formatJson(msg.content))}</pre>
+              </details>
+            </div>
+          </div>
+        `;
+      }
+
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    // Persistent Loading Bar State Control
+    let activeLoadingNode = null;
+
+    function showLoadingIndicator() {
+      if (activeLoadingNode) return;
+
+      activeLoadingNode = document.createElement('div');
+      activeLoadingNode.id = 'active-loader';
+      activeLoadingNode.className = 'animate-msg flex items-center gap-3 mb-4';
+      activeLoadingNode.innerHTML = `
+        <div class="w-7 h-7 rounded-sm bg-amber/20 border border-amber-border flex items-center justify-center shrink-0 text-rust">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.42 15.17L17.23 19.44a2.12 2.12 0 002.97-.06l1.44-1.44a2.12 2.12 0 00.06-2.97l-4.27-5.81a2.12 2.12 0 00-1.56-.82l-2.62-.14-1.73 1.73.14 2.62c.05.59.31 1.15.76 1.56zM11.42 15.17l-3.15.63-2.62 2.62.63 3.15-4.44.63-1.44 1.44a2.12 2.12 0 002.97 2.97l1.44-1.44.63-4.44 3.15.63 2.62-2.62.63-3.15z"/>
+          </svg>
+        </div>
+        <div class="bg-steel-light border border-steel rounded-sm px-4 py-2.5 flex items-center gap-2 shadow-plate">
+          <span class="flex gap-1 items-center">
+            <span class="w-1.5 h-1.5 rounded-full bg-rust pulse-dot"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-rust pulse-dot"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-rust pulse-dot"></span>
+          </span>
+          <span class="text-xs text-steel-deep font-semibold uppercase tracking-wide">Agent is processing...</span>
+        </div>
+      `;
+      el.messagesContainer.appendChild(activeLoadingNode);
+      scrollToBottom();
+    }
+
+    function hideLoadingIndicator() {
+      if (activeLoadingNode) {
+        activeLoadingNode.remove();
+        activeLoadingNode = null;
+      }
+    }
+
+    function showError(message) {
+      hideLoadingIndicator();
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg flex justify-start mb-4';
+      wrapper.innerHTML = `
+        <div class="bg-red-800/10 border border-red-800/40 rounded-sm px-4 py-3 max-w-[85%] text-xs text-red-900">
+          <span class="font-bold block mb-1 uppercase tracking-wide">Execution Error</span>
+          ${escapeHtml(message)}
+        </div>
+      `;
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    // ============== Utilities ==============
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function formatJson(val) {
+      if (typeof val === 'object') return JSON.stringify(val, null, 2);
+      try {
+        return JSON.stringify(JSON.parse(val), null, 2);
+      } catch {
+        return String(val);
+      }
+    }
+
+    let _scrollRafPending = false;
+    function scrollToBottom() {
+      if (_scrollRafPending) return;
+      _scrollRafPending = true;
+      requestAnimationFrame(() => {
+        el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+        _scrollRafPending = false;
+      });
+    }
+
+    function updateSessionTokensWidget() {
+      if (!state.currentThreadId) {
+        if (el.sessionTotalTokens) el.sessionTotalTokens.textContent = '0';
+        if (el.sessionInputTokens) el.sessionInputTokens.textContent = '0';
+        if (el.sessionOutputTokens) el.sessionOutputTokens.textContent = '0';
+        if (el.sessionContextTokens) el.sessionContextTokens.textContent = '0';
+        return;
+      }
+      const msgs = getSessionMessages(state.currentThreadId);
+      let inp = 0, out = 0, tot = 0, context = 0;
+      for (const m of msgs) {
+        if (m.usage) {
+          inp += m.usage.input_tokens || 0;
+          out += m.usage.output_tokens || 0;
+          tot += m.usage.total_tokens || 0;
+          // Context = latest (max) input_tokens — what the next prompt will receive
+          context = Math.max(context, m.usage.input_tokens || 0);
+        }
+      }
+      if (el.sessionTotalTokens) el.sessionTotalTokens.textContent = tot.toLocaleString();
+      if (el.sessionInputTokens) el.sessionInputTokens.textContent = inp.toLocaleString();
+      if (el.sessionOutputTokens) el.sessionOutputTokens.textContent = out.toLocaleString();
+      if (el.sessionContextTokens) el.sessionContextTokens.textContent = context.toLocaleString();
+    }
+
+    // ============== API Interactions ==============
+    async function loadSessionsFromDB() {
+      try {
+        const res = await fetch('/api/sessions');
+        if (!res.ok) return;
+        const data = await res.json();
+        state.sessions = data.sessions || [];
+        renderSessions();
+      } catch (e) {
+        console.error('Failed to load sessions:', e);
+      }
+    }
+
+    async function selectSession(threadId) {
+      setCurrentThread(threadId);
+      renderSessions();
+
+      el.messagesContainer.innerHTML = '';
+      showLoadingIndicator();
+
+      try {
+        const res = await fetch(`/api/sessions/${threadId}/messages`);
+        hideLoadingIndicator();
+
+        if (res.ok) {
+          const data = await res.json();
+          state.messages[threadId] = data.messages || [];
+
+          if (state.messages[threadId].length === 0) {
+            el.emptyState.style.display = 'flex';
+            el.messagesContainer.appendChild(el.emptyState);
+          } else {
+            el.emptyState.style.display = 'none';
+            for (const msg of state.messages[threadId]) {
+              renderMessageNode(msg);
+            }
+          }
+        }
+      } catch (e) {
+        hideLoadingIndicator();
+        showError('Failed to load session messages from server.');
+      }
+      updateSessionTokensWidget();
+    }
+
+    function startNewChat() {
+      // Abort any in-progress stream
+      if (state.abortController) {
+        state.abortController.abort();
+        state.abortController = null;
+        state.isStreaming = false;
+      }
+      setCurrentThread(null);
+      renderSessions();
+      el.messagesContainer.innerHTML = '';
+      el.messagesContainer.appendChild(el.emptyState);
+      el.emptyState.style.display = 'flex';
+      updateSessionTokensWidget();
+      el.messageInput.focus();
+    }
+
+    async function deleteSession(threadId) {
+      try {
+        await fetch(`/api/sessions/${threadId}`, { method: 'DELETE' });
+      } catch (e) {}
+
+      state.sessions = state.sessions.filter(s => s.thread_id !== threadId);
+      delete state.messages[threadId];
+
+      if (state.currentThreadId === threadId) {
+        startNewChat();
+      } else {
+        renderSessions();
+      }
+    }
+
+    async function clearAllSessions() {
+      if (!confirm('Clear all conversation history?')) return;
+      try {
+        await fetch('/api/sessions', { method: 'DELETE' });
+      } catch (e) {
+        console.error('Failed to bulk delete sessions:', e);
+      }
+      state.sessions = [];
+      state.messages = {};
+      startNewChat();
+    }
+
+    async function sendMessage(overrideText = null) {
+      const text = (overrideText || el.messageInput.value).trim();
+      if (!text || state.isStreaming) return;
+
+      el.messageInput.value = '';
+      el.messageInput.style.height = 'auto';
+      el.sendBtn.disabled = true;
+      state.isStreaming = true;
+
+      // Hide empty screen
+      el.emptyState.style.display = 'none';
+
+      // Ensure thread ID
+      if (!state.currentThreadId) {
+        state.currentThreadId = `session-${Date.now().toString(36)}`;
+      }
+
+      // Add user message node
+      const userMsg = { type: 'human', content: text };
+      renderMessageNode(userMsg);
+      if (!state.messages[state.currentThreadId]) {
+        state.messages[state.currentThreadId] = [];
+      }
+      state.messages[state.currentThreadId].push(userMsg);
+
+      // Save session item preview
+      const sessionIndex = state.sessions.findIndex(s => s.thread_id === state.currentThreadId);
+      if (sessionIndex === -1) {
+        state.sessions.unshift({
+          thread_id: state.currentThreadId,
+          first_message: text.substring(0, 45),
+          updated_at: new Date().toISOString()
+        });
+      } else {
+        state.sessions[sessionIndex].updated_at = new Date().toISOString();
+      }
+      renderSessions();
+
+      // Show loader
+      showLoadingIndicator();
+
+      // Create AbortController for cancellation support
+      state.abortController = new AbortController();
+
+      try {
+        let activeAiWrapper = null;
+        let activeAiTextEl = null;
+        let activeThinkingTextEl = null;
+
+        for await (const { event, data } of streamChat(text, state.currentThreadId, state.abortController.signal)) {
+          if (event === 'message') {
+            if (data.type === 'human') continue;
+
+            hideLoadingIndicator();
+
+            if (data.type === 'text_delta') {
+              if (!activeAiWrapper) {
+                activeAiWrapper = document.createElement('div');
+                activeAiWrapper.className = 'animate-msg w-full flex items-start gap-3 mb-6';
+                activeAiWrapper.innerHTML = `
+                  <div class="w-7 h-7 rounded-sm bg-amber/20 border border-amber-border flex items-center justify-center shrink-0 mt-0.5 text-rust">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                  </div>
+                  <div class="relative flex-1 bg-steel-light border border-steel rounded-sm px-5 py-4 max-w-[90%] shadow-plate prose-plate ai-content-body">
+                  </div>
+                `;
+                activeAiTextEl = activeAiWrapper.querySelector('.ai-content-body');
+                activeAiTextEl.dataset.raw = '';
+                el.messagesContainer.appendChild(activeAiWrapper);
+              }
+
+              activeAiTextEl.dataset.raw += data.content;
+              // Debounce markdown re-rendering with requestAnimationFrame
+              if (!activeAiTextEl._rafPending) {
+                activeAiTextEl._rafPending = true;
+                requestAnimationFrame(() => {
+                  activeAiTextEl.innerHTML = marked.parse(activeAiTextEl.dataset.raw);
+                  activeAiTextEl._rafPending = false;
+                  scrollToBottom();
+                });
+              }
+            }
+            else if (data.type === 'thinking_delta') {
+              if (!activeThinkingTextEl) {
+                const thinkWrapper = document.createElement('div');
+                thinkWrapper.className = 'animate-msg w-full flex items-start gap-3 mb-4';
+                thinkWrapper.innerHTML = `
+                  <div class="w-7 h-7 rounded-sm bg-steel-light border border-steel flex items-center justify-center shrink-0 mt-0.5 text-steel-deep">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    </svg>
+                  </div>
+                  <div class="flex-1 bg-steel-light/70 border border-steel/70 rounded-sm px-4 py-3 max-w-[90%] font-mono text-xs">
+                    <details class="group" open>
+                      <summary class="flex items-center justify-between cursor-pointer text-steel-deep hover:text-ink select-none">
+                        <span class="font-sans font-semibold text-xs flex items-center gap-2 uppercase tracking-wide">
+                          <span>Thought Process</span>
+                        </span>
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-180 text-steel" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                      </summary>
+                      <div class="thinking-body mt-2.5 pt-2.5 border-t border-steel/50 text-steel-deep whitespace-pre-wrap leading-relaxed text-[11px]"></div>
+                    </details>
+                  </div>
+                `;
+                activeThinkingTextEl = thinkWrapper.querySelector('.thinking-body');
+                el.messagesContainer.appendChild(thinkWrapper);
+              }
+              activeThinkingTextEl.textContent += data.content;
+              scrollToBottom();
+            }
+            else {
+              activeAiWrapper = null;
+              activeAiTextEl = null;
+              activeThinkingTextEl = null;
+              renderMessageNode(data);
+              showLoadingIndicator();
+            }
+          } else if (event === 'done') {
+            hideLoadingIndicator();
+            if (data.thread_id && data.thread_id !== state.currentThreadId) {
+              setCurrentThread(data.thread_id);
+            }
+            if (data.usage) {
+              if (activeAiTextEl) {
+                const usageBadge = document.createElement('div');
+                usageBadge.className = 'mt-3 pt-2 border-t border-steel/40 flex items-center gap-3 font-mono text-[10px] text-steel';
+                usageBadge.innerHTML = `
+                  <span title="Input tokens">in: <strong class="text-ink">${data.usage.input_tokens || 0}</strong></span>
+                  <span title="Output tokens">out: <strong class="text-ink">${data.usage.output_tokens || 0}</strong></span>
+                  <span title="Total tokens">total: <strong class="text-rust">${data.usage.total_tokens || 0}</strong></span>
+                `;
+                activeAiTextEl.appendChild(usageBadge);
+              }
+
+              // Update token stats directly in memory without extra API requests
+              if (!state.messages[state.currentThreadId]) {
+                state.messages[state.currentThreadId] = [];
+              }
+              state.messages[state.currentThreadId].push({ usage: data.usage });
+              updateSessionTokensWidget();
+            }
+            await loadSessionsFromDB();
+          } else if (event === 'error') {
+            showError(data.message || 'Stream processing failed');
+          }
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          showError(err.message || 'Failed to communicate with agent server');
+        }
+      } finally {
+        hideLoadingIndicator();
+        state.isStreaming = false;
+        state.abortController = null;
+        el.sendBtn.disabled = el.messageInput.value.trim().length === 0;
+        el.messageInput.focus();
+      }
+    }
+
+    // ============== Listeners ==============
+    el.sendBtn.addEventListener('click', () => sendMessage());
+
+    el.messageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    el.messageInput.addEventListener('input', () => {
+      // Auto expand textarea height
+      el.messageInput.style.height = 'auto';
+      el.messageInput.style.height = Math.min(el.messageInput.scrollHeight, 192) + 'px';
+
+      el.sendBtn.disabled = el.messageInput.value.trim().length === 0 || state.isStreaming;
+    });
+
+    el.newChatBtn.addEventListener('click', startNewChat);
+    el.clearAllBtn.addEventListener('click', clearAllSessions);
+
+    el.menuToggle?.addEventListener('click', () => {
+      el.sidebar.classList.toggle('-translate-x-full');
+    });
+
+    document.querySelectorAll('.prompt-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const text = chip.querySelector('.font-semibold').textContent;
+        sendMessage(text);
+      });
+    });
+
+    // ============== Initialize ==============
+    async function init() {
+      checkHealth();
+      await loadSessionsFromDB();
+
+      if (state.currentThreadId) {
+        await selectSession(state.currentThreadId);
+      } else {
+        startNewChat();
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
