@@ -3,13 +3,17 @@ FastAPI server for QA Automation Chatbot.
 
 Provides a REST API + SSE streaming for chat interactions with the QA automation agent.
 Serves the index.html frontend directly at /.
+
+Supports two response modes:
+- normal: Existing streaming behavior (text_delta, thinking_delta, tool_result)
+- blocks: Structured output with server-enriched content blocks for audio explanations
 """
 
 import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from contextlib import asynccontextmanager
 
@@ -33,10 +37,12 @@ except ImportError as e:
     AGENT_AVAILABLE = False
     AGENT_ERROR = str(e)
 
+# Import structured output schemas
+from schemas import ContentBlock, AgentResponse, EnrichedContentBlock
+
 # Constants
 HOST = "0.0.0.0"
-PORT = 8000
-# Skills path — will be resolved relative to workspace at runtime
+PORT = 8225
 
 
 def _resolve_skills(workspace: str) -> list[str]:
@@ -69,6 +75,7 @@ _RETRO_HTML = _RETRO_HTML_PATH.read_text() if _RETRO_HTML_PATH.exists() else "<h
 _INDUSTRIAL_HTML_PATH = Path(__file__).parent / "industrial" / "index.html"
 _INDUSTRIAL_HTML = _INDUSTRIAL_HTML_PATH.read_text() if _INDUSTRIAL_HTML_PATH.exists() else "<h1>industrial/index.html not found</h1>"
 
+
 # App
 # ============== Lifespan ==============
 
@@ -99,8 +106,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global agent cache (keyed by workspace path) & db instances
-_WORKSPACE_AGENTS: dict[str, Any] = {}   # workspace_path -> compiled agent
+# Global agent cache (keyed by workspace path, value is tuple of (normal_agent, blocks_agent))
+_WORKSPACE_AGENTS: dict[str, tuple[Any, Any]] = {}  # workspace_path -> (normal_agent, blocks_agent)
 _MCP_CLIENT = None                       # shared across all workspaces
 _TOOLS = None                            # shared MCP tools
 _DEFAULT_WORKSPACE = "."                 # fallback when no workspace specified
@@ -109,12 +116,13 @@ _checkpointer = None
 
 
 async def get_db():
-    """Get persistent SQLite connection."""
+    """Get persistent SQLite connection with schema migrations."""
     global _db_conn, _checkpointer
     if _db_conn is None:
         _db_conn = await aiosqlite.connect(str(DB_PATH))
         _checkpointer = AsyncSqliteSaver(_db_conn)
-        # Create session_meta cache table if it doesn't exist, or migrate it
+        
+        # Create session_meta cache table if it doesn't exist
         await _db_conn.execute("""
             CREATE TABLE IF NOT EXISTS session_meta (
                 thread_id TEXT PRIMARY KEY,
@@ -123,35 +131,26 @@ async def get_db():
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
+        
         # Migrate: add workspace column if it doesn't exist (for existing DBs)
         try:
             await _db_conn.execute("ALTER TABLE session_meta ADD COLUMN workspace TEXT NOT NULL DEFAULT ''")
         except Exception:
             pass  # Column already exists
+        
+        # Migrate: add enriched_blocks column if it doesn't exist (for blocks mode)
+        try:
+            await _db_conn.execute("ALTER TABLE session_meta ADD COLUMN enriched_blocks TEXT")
+        except Exception:
+            pass  # Column already exists
+        
         await _db_conn.commit()
+    
     return _db_conn, _checkpointer
 
 
-async def get_or_create_agent(workspace: str):
-    """Get or create a deep agent for the given workspace path.
-
-    Agents are cached by workspace path. The MCP client and tools are shared
-    across all workspaces. Each workspace gets its own FilesystemBackend with
-    virtual_mode=True (agent cannot escape the workspace directory).
-    """
-    global _MCP_CLIENT, _TOOLS
-
-    if not AGENT_AVAILABLE:
-        raise RuntimeError(f"Agent packages not available: {AGENT_ERROR}")
-
-    # Return cached agent if it exists for this workspace
-    if workspace in _WORKSPACE_AGENTS:
-        return _WORKSPACE_AGENTS[workspace]
-
-    _, checkpointer = await get_db()
-
-    # Shared MCP client + tools (lazy-init on first workspace creation)
-
+async def _create_agent(workspace: str, response_format: type | None) -> Any:
+    """Create a configured deep agent with optional structured output."""
     # LLM setup
     model = ChatAnthropic(
         model="ornith-1.0",
@@ -159,30 +158,118 @@ async def get_or_create_agent(workspace: str):
         base_url="http://localhost:8083/anthropic"
     )
 
-    # Backend scoped to workspace — virtual_mode=True prevents escape
-    
+    # Backend scoped to workspace
     backend = FilesystemBackend(
         root_dir="/home/web-h-063",
         virtual_mode=False
     )
 
-    # Resolve skills for this workspace
-    
-    # Create agent
+    # Create agent with optional response_format for structured output
     agent = create_deep_agent(
-    model=model,
-    system_prompt=f"""
-
-## Workspace Constraint (STRICT)
-Your workspace is: `{workspace}`
-
-""",
-        checkpointer=checkpointer,
-        backend=backend
+        model=model,
+        checkpointer=_checkpointer,
+        backend=backend,
+        response_format=response_format
     )
-
-    _WORKSPACE_AGENTS[workspace] = agent
+    
     return agent
+
+
+async def get_or_create_agent(
+    workspace: str,
+    response_mode: Literal["normal", "blocks"] = "normal"
+):
+    """Get or create a deep agent for the given workspace path and response mode.
+
+    Agents are cached by (workspace, response_mode) tuple. The MCP client and tools 
+    are shared across all workspaces. Each workspace gets its own agent pair:
+    - normal mode: response_format=None (existing behavior)
+    - blocks mode: response_format=AgentResponse (structured output)
+    """
+    global _MCP_CLIENT, _TOOLS
+
+    if not AGENT_AVAILABLE:
+        raise RuntimeError(f"Agent packages not available: {AGENT_ERROR}")
+
+    # Get or create tuple for this workspace
+    if workspace not in _WORKSPACE_AGENTS:
+        _WORKSPACE_AGENTS[workspace] = (None, None)  # (normal_agent, blocks_agent)
+    
+    normal_agent, blocks_agent = _WORKSPACE_AGENTS[workspace]
+    
+    if response_mode == "normal":
+        if normal_agent is None:
+            normal_agent = await _create_agent(workspace, response_format=None)
+            _WORKSPACE_AGENTS[workspace] = (normal_agent, blocks_agent)
+        return normal_agent
+    else:  # blocks mode
+        if blocks_agent is None:
+            blocks_agent = await _create_agent(workspace, response_format=AgentResponse)
+            _WORKSPACE_AGENTS[workspace] = (normal_agent, blocks_agent)
+        return blocks_agent
+
+
+# ============== Block Enrichment Helpers ==============
+
+def _enrich_blocks(blocks: list[ContentBlock]) -> list[EnrichedContentBlock]:
+    """Enrich LLM-generated blocks with server-side identity (UUID, sequence_id).
+    
+    Args:
+        blocks: List of ContentBlock from validated AgentResponse
+        
+    Returns:
+        List of EnrichedContentBlock with server-generated UUIDs and sequence_ids
+    """
+    return [
+        EnrichedContentBlock(
+            uuid=str(uuid.uuid4()),
+            sequence_id=i + 1,
+            markdown=b.markdown,
+            spoken_explanation=b.spoken_explanation,
+        )
+        for i, b in enumerate(blocks)
+    ]
+
+
+async def _persist_enriched_blocks(thread_id: str, blocks: list[EnrichedContentBlock]) -> None:
+    """Persist enriched blocks to session_meta.enriched_blocks.
+    
+    Args:
+        thread_id: The session thread ID
+        blocks: List of EnrichedContentBlock to persist
+    """
+    conn, _ = await get_db()
+    blocks_json = json.dumps([b.model_dump() for b in blocks])
+    await conn.execute(
+        "UPDATE session_meta SET enriched_blocks = ? WHERE thread_id = ?",
+        (blocks_json, thread_id)
+    )
+    await conn.commit()
+
+
+async def _get_enriched_blocks(thread_id: str) -> list[EnrichedContentBlock] | None:
+    """Retrieve enriched blocks from session_meta.
+    
+    Args:
+        thread_id: The session thread ID
+        
+    Returns:
+        List of EnrichedContentBlock or None if not found
+    """
+    conn, _ = await get_db()
+    async with conn.cursor() as cursor:
+        await cursor.execute(
+            "SELECT enriched_blocks FROM session_meta WHERE thread_id = ?",
+            (thread_id,)
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            try:
+                blocks_data = json.loads(row[0])
+                return [EnrichedContentBlock(**b) for b in blocks_data]
+            except (json.JSONDecodeError, Exception):
+                return None
+        return None
 
 
 # ============== Models ==============
@@ -191,6 +278,7 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: str | None = None
     workspace: str | None = None
+    response_mode: Literal["normal", "blocks"] = "normal"  # NEW: opt-in blocks mode
 
 
 class WorkspaceSelectRequest(BaseModel):
@@ -218,17 +306,19 @@ class SessionsListResponse(BaseModel):
 class MessagesResponse(BaseModel):
     thread_id: str
     messages: list[dict]
+    enriched_blocks: list[dict] | None = None  # NEW: for blocks mode
 
 
 # ============== Message Parsing ==============
 
-def parse_agent_messages(result: dict) -> list[dict]:
+def parse_agent_messages(result: dict, include_structured: bool = False) -> list[dict]:
     """
     Parse the agent result into a list of message dicts.
 
     Args:
         result: The result from agent.ainvoke()
-
+        include_structured: If True, include structured_response as a special message
+        
     Returns:
         List of message dicts with type, content, etc.
     """
@@ -297,6 +387,18 @@ def parse_agent_messages(result: dict) -> list[dict]:
             }
 
         messages.append(msg_dict)
+    
+    # Include structured_response as a special message for blocks mode
+    if include_structured and "structured_response" in result:
+        structured = result["structured_response"]
+        if isinstance(structured, AgentResponse):
+            messages.append({
+                "type": "structured_response",
+                "blocks": [
+                    {"markdown": b.markdown, "spoken_explanation": b.spoken_explanation}
+                    for b in structured.blocks
+                ]
+            })
 
     return messages
 
@@ -380,7 +482,7 @@ async def list_sessions():
 
 @app.get("/api/sessions/{thread_id}/messages", response_model=MessagesResponse)
 async def get_session_messages(thread_id: str):
-    """Get all historical messages for a session directly from SQLite state."""
+    """Get all historical messages for a session, including enriched blocks for blocks mode."""
     # Resolve workspace for this session
     conn, _ = await get_db()
     async with conn.cursor() as cursor:
@@ -394,13 +496,25 @@ async def get_session_messages(thread_id: str):
     try:
         state = await agent.aget_state(config)
         if not state or not state.values:
-            return MessagesResponse(thread_id=thread_id, messages=[])
+            return MessagesResponse(thread_id=thread_id, messages=[], enriched_blocks=None)
         
-        parsed = parse_agent_messages(state.values)
-        return MessagesResponse(thread_id=thread_id, messages=parsed)
+        # Check if this session has structured responses
+        has_structured = "structured_response" in state.values
+        
+        parsed = parse_agent_messages(state.values, include_structured=has_structured)
+        
+        # Get enriched blocks if they exist
+        enriched_blocks = await _get_enriched_blocks(thread_id)
+        enriched_blocks_dict = [b.model_dump() for b in enriched_blocks] if enriched_blocks else None
+        
+        return MessagesResponse(
+            thread_id=thread_id, 
+            messages=parsed,
+            enriched_blocks=enriched_blocks_dict
+        )
     except Exception as e:
         print(f"Error fetching state for thread {thread_id}: {e}")
-        return MessagesResponse(thread_id=thread_id, messages=[])
+        return MessagesResponse(thread_id=thread_id, messages=[], enriched_blocks=None)
 
 
 @app.delete("/api/sessions/{thread_id}")
@@ -473,8 +587,14 @@ async def get_current_workspace(thread_id: str | None = None):
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     """
-    Send a message and stream the response in real-time using agent.astream
-    with stream_mode="messages", subgraphs=True, version="v2".
+    Send a message and stream the response in real-time.
+    
+    With response_mode="normal" (default): Uses existing streaming behavior with
+    text_delta, thinking_delta, tool_result events.
+    
+    With response_mode="blocks": Uses structured output with server-enriched
+    content blocks. The response is validated, then enriched with UUIDs and
+    sequence_ids, persisted, and emitted as content_block events.
     """
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -498,7 +618,8 @@ async def chat(request: ChatRequest):
 
     async def event_stream():
         try:
-            agent = await get_or_create_agent(workspace)
+            # Get agent based on response_mode
+            agent = await get_or_create_agent(workspace, response_mode=request.response_mode)
             config = {"configurable": {"thread_id": thread_id}}
 
             # Cache first_message and workspace in session_meta on first interaction
@@ -522,6 +643,10 @@ async def chat(request: ChatRequest):
 
             # Track pending tool calls to accumulate input args before emitting
             pending_tools = {}  # index -> {name, id, args_str}
+            
+            # For blocks mode: track structured output completion
+            blocks_mode = request.response_mode == "blocks"
+            structured_response_received = False
 
             async for chunk in agent.astream(
                 {"messages": [{"role": "user", "content": request.message}]},
@@ -578,7 +703,6 @@ async def chat(request: ChatRequest):
                                             "id": tool_id,
                                             "args_str": ""
                                         }
-                                        # Don't emit tool_call here - wait for args to accumulate
 
                                 elif b_type == "input_json_delta":
                                     # Accumulate partial JSON args for this tool
@@ -607,13 +731,14 @@ async def chat(request: ChatRequest):
                 elif msg_type in ("tool", "toolmessage"):
                     tool_name = getattr(msg_obj, 'name', 'tool')
                     tool_content = getattr(msg_obj, 'content', '')
-                    tool_id = getattr(msg_obj, 'id', None)
+                    # Use tool_call_id which matches the original tool_use id
+                    tool_call_id = getattr(msg_obj, 'tool_call_id', None)
 
-                    # Find the matching pending tool call
+                    # Find the matching pending tool call by tool_call_id
                     input_args = {}
                     tool_use_id = None
                     for p in pending_tools.values():
-                        if p["id"] == tool_id:
+                        if p["id"] == tool_call_id:
                             # Try to parse accumulated args
                             try:
                                 if p["args_str"]:
@@ -637,8 +762,52 @@ async def chat(request: ChatRequest):
                         "input": input_args,
                         "content": str(tool_content),
                     })
-
-            # Stream Done Signal
+            
+            # For blocks mode: retrieve structured_response from agent state and emit blocks
+            if blocks_mode:
+                try:
+                    # Get the final state which contains structured_response
+                    state = await agent.aget_state(config)
+                    
+                    if state and state.values and "structured_response" in state.values:
+                        structured_response = state.values["structured_response"]
+                        
+                        if isinstance(structured_response, AgentResponse):
+                            # Validate: ensure blocks exist
+                            if structured_response.blocks:
+                                # Enrich blocks with server-generated UUIDs and sequence_ids
+                                enriched_blocks = _enrich_blocks(structured_response.blocks)
+                                
+                                # Persist enriched blocks before emitting
+                                await _persist_enriched_blocks(thread_id, enriched_blocks)
+                                
+                                # Emit content_block events in sequence order
+                                for block in enriched_blocks:
+                                    yield format_sse("message", {
+                                        "type": "content_block",
+                                        "uuid": block.uuid,
+                                        "sequence_id": block.sequence_id,
+                                        "markdown": block.markdown,
+                                        "spoken_explanation": block.spoken_explanation,
+                                    })
+                                
+                                # Stream Done Signal with blocks mode info
+                                yield format_sse("done", {
+                                    "thread_id": thread_id,
+                                    "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
+                                    "response_mode": "blocks",
+                                    "block_count": len(enriched_blocks),
+                                })
+                                return  # Done with blocks mode
+                except Exception as e:
+                    print(f"Error processing structured response: {e}")
+                    yield format_sse("error", {
+                        "message": f"Failed to process structured response: {e}",
+                        "mode": "blocks"
+                    })
+                    return
+            
+            # Stream Done Signal (normal mode or fallback)
             yield format_sse("done", {
                 "thread_id": thread_id,
                 "usage": turn_usage if turn_usage["total_tokens"] > 0 else None

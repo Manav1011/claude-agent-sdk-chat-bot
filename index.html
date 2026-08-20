@@ -295,6 +295,21 @@
         </div>
       </div>
 
+      <!-- Header Bar -->
+      <div class="flex items-center justify-between px-4 lg:px-6 pt-3 shrink-0">
+        <button id="tools-panel-toggle-btn" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs bg-dark-elevated hover:bg-dark-surface border border-dark-border text-txt-muted hover:text-white transition-colors">
+          <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          </svg>
+          <span>Tools</span>
+          <span id="tools-badge-btn" class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">0</span>
+        </button>
+        <div class="flex bg-dark-elevated rounded-lg p-0.5 border border-dark-border">
+          <button id="mode-normal" class="px-3 py-1 rounded-md text-xs transition-colors bg-brand text-white font-medium shadow-sm">Normal</button>
+          <button id="mode-blocks" class="px-3 py-1 rounded-md text-xs transition-colors text-txt-subtle hover:text-white">Blocks</button>
+        </div>
+      </div>
+
       <!-- Chat Messages Scroll Container -->
       <div id="messages-container" class="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6 max-w-4xl w-full mx-auto">
         
@@ -358,6 +373,32 @@
 
     </main>
 
+    <!-- Right Side Tools Panel -->
+    <aside id="tools-panel" class="w-80 bg-dark-surface/95 backdrop-blur-md border-l border-dark-border flex flex-col shrink-0 transition-all duration-300 z-20 hidden">
+      <div class="p-3.5 border-b border-dark-border flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-6 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            </svg>
+          </div>
+          <span class="font-medium text-xs text-white">Tool Call History</span>
+          <span id="tools-count-badge" class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">0</span>
+        </div>
+        <button id="tools-panel-close-btn" class="p-1 text-txt-subtle hover:text-white rounded-lg transition-colors" title="Close Panel">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="tools-list" class="flex-1 overflow-y-auto p-3 space-y-2.5">
+        <div id="tools-empty-state" class="px-3 py-6 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-xl my-2">
+          No tool calls
+        </div>
+      </div>
+    </aside>
+
   </div>
 
   <!-- JavaScript Logic -->
@@ -378,6 +419,8 @@
       currentThreadId: localStorage.getItem('qa-chat-current-thread') || null,
       sessions: [],
       messages: {},
+      currentMode: 'normal',
+      blocks: {},
       isStreaming: false,
       abortController: null,
       currentWorkspace: null,
@@ -416,7 +459,32 @@
       workspaceInput: document.getElementById('workspace-input'),
       workspaceSetBtn: document.getElementById('workspace-set-btn'),
       workspaceStatus: document.getElementById('workspace-status'),
+      modeNormalBtn: document.getElementById('mode-normal'),
+      modeBlocksBtn: document.getElementById('mode-blocks'),
+      toolsPanel: document.getElementById('tools-panel'),
+      toolsPanelToggleBtn: document.getElementById('tools-panel-toggle-btn'),
+      toolsPanelCloseBtn: document.getElementById('tools-panel-close-btn'),
+      toolsList: document.getElementById('tools-list'),
+      toolsCountBadge: document.getElementById('tools-count-badge'),
+      toolsBadgeBtn: document.getElementById('tools-badge-btn'),
     };
+
+    function setMode(mode) {
+      if (state.currentMode === mode) return;
+      if (state.isStreaming && state.abortController) {
+        state.abortController.abort();
+        state.abortController = null;
+        state.isStreaming = false;
+      }
+      state.currentMode = mode;
+      if (mode === 'blocks') {
+        if (el.modeNormalBtn) el.modeNormalBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors text-txt-subtle hover:text-white';
+        if (el.modeBlocksBtn) el.modeBlocksBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors bg-brand text-white font-medium shadow-sm';
+      } else {
+        if (el.modeNormalBtn) el.modeNormalBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors bg-brand text-white font-medium shadow-sm';
+        if (el.modeBlocksBtn) el.modeBlocksBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors text-txt-subtle hover:text-white';
+      }
+    }
 
     // ============== Health Check ==============
     async function checkHealth() {
@@ -496,6 +564,7 @@
           message, 
           thread_id: threadId,
           workspace: state.currentWorkspace || undefined,
+          response_mode: state.currentMode,
         }),
         signal,
       });
@@ -648,34 +717,107 @@
           </div>
         `;
       } else if (msg.type === 'tool_result') {
-        // Show combined card: tool name + input args + output
-        wrapper.innerHTML = `
-          <div class="flex items-start gap-3 mb-4">
-            <div class="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5 text-amber-400">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-              </svg>
-            </div>
-            <div class="flex-1 bg-dark-surface border border-amber-500/20 rounded-xl px-3.5 py-2.5 max-w-[90%] font-mono text-xs">
-              <div class="flex items-center gap-2 text-amber-400 font-medium text-[11px] mb-2">
-                <span>TOOL:</span>
-                <span class="bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 text-white">${escapeHtml(msg.name)}</span>
-              </div>
-              ${msg.input && Object.keys(msg.input).length > 0 ? `
-                <div class="mb-2">
-                  <div class="text-[10px] text-txt-subtle uppercase tracking-wider mb-1">INPUT:</div>
-                  <pre class="text-[11px] text-emerald-300 overflow-x-auto bg-dark-bg p-2 rounded border border-dark-border">${escapeHtml(formatJson(msg.input))}</pre>
-                </div>
-              ` : ''}
-              ${msg.content ? `
-                <div>
-                  <div class="text-[10px] text-txt-subtle uppercase tracking-wider mb-1">OUTPUT:</div>
-                  <pre class="text-[11px] text-txt-muted overflow-x-auto bg-dark-bg p-2.5 rounded border border-dark-border max-h-48">${escapeHtml(formatJson(msg.content))}</pre>
-                </div>
-              ` : ''}
-            </div>
+        // Hide tool calls from main panel
+        return;
+      }
+
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    function renderToolCallNode(tool) {
+      const emptyEl = document.getElementById('tools-empty-state');
+      if (emptyEl) emptyEl.remove();
+
+      const item = document.createElement('div');
+      item.className = 'animate-msg bg-dark-surface border border-dark-border rounded-xl p-3 text-xs space-y-2';
+      item.innerHTML = `
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">Tool:</span>
+          <span class="bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 text-white font-mono text-[11px]">${escapeHtml(tool.name || 'tool')}</span>
+        </div>
+        ${tool.input && Object.keys(tool.input).length > 0 ? `
+          <div>
+            <div class="text-[9px] text-txt-subtle uppercase tracking-wider mb-1 font-mono">INPUT:</div>
+            <pre class="text-[10px] text-emerald-300 overflow-x-auto bg-dark-bg p-2 rounded border border-dark-border font-mono max-h-36">${escapeHtml(formatJson(tool.input))}</pre>
+          </div>
+        ` : ''}
+      `;
+      if (el.toolsList) el.toolsList.appendChild(item);
+      updateToolCount();
+    }
+
+    function clearToolCalls() {
+      if (el.toolsList) {
+        el.toolsList.innerHTML = `
+          <div id="tools-empty-state" class="px-3 py-6 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-xl my-2">
+            No tool calls
           </div>
         `;
+      }
+      updateToolCount();
+    }
+
+    function updateToolCount() {
+      const count = el.toolsList ? el.toolsList.querySelectorAll('.bg-dark-surface').length : 0;
+      if (el.toolsCountBadge) el.toolsCountBadge.textContent = count;
+      if (el.toolsBadgeBtn) el.toolsBadgeBtn.textContent = count;
+    }
+
+    function renderBlockNode(block, threadId) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg w-full flex items-start gap-3 mb-6';
+      if (block.uuid) {
+        wrapper.dataset.blockUuid = block.uuid;
+      }
+
+      const seqId = block.sequence_id !== undefined ? block.sequence_id : 1;
+      const markdownContent = block.markdown ? marked.parse(block.markdown) : '<p class="text-txt-subtle italic">No content</p>';
+      const spokenText = block.spoken_explanation || 'No spoken explanation provided.';
+
+      wrapper.innerHTML = `
+        <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 mt-0.5 text-brand">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+        </div>
+        <div class="flex-1 bg-dark-surface border border-dark-border rounded-xl px-4 py-3 max-w-[90%] shadow-card-glow">
+          <div class="flex items-center justify-between pb-2 mb-2 border-b border-dark-border/40">
+            <span class="text-[11px] font-mono text-txt-subtle font-medium">Block ${seqId}</span>
+          </div>
+          <div class="prose-dark mb-3">
+            ${markdownContent}
+          </div>
+          <details class="group mt-2 pt-2 border-t border-dark-border/40">
+            <summary class="flex items-center gap-1 cursor-pointer text-xs text-txt-subtle hover:text-brand transition-colors select-none">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M11 5L6 9H2v6h4l5 4V5z"/>
+              </svg>
+              <span>Read Aloud</span>
+              <svg class="w-3 h-3 ml-auto transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </summary>
+            <div class="text-sm text-txt-muted mt-2 pt-2 border-t border-dark-border/40 flex flex-col gap-2">
+              <div class="leading-relaxed">${escapeHtml(spokenText)}</div>
+              <button type="button" class="play-audio-btn self-start flex items-center gap-1.5 text-xs text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2.5 py-1 rounded border border-brand/20 transition-colors mt-1">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+                <span>Play</span>
+              </button>
+            </div>
+          </details>
+        </div>
+      `;
+
+      const playBtn = wrapper.querySelector('.play-audio-btn');
+      if (playBtn && 'speechSynthesis' in window) {
+        playBtn.addEventListener('click', () => {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(spokenText);
+          window.speechSynthesis.speak(utterance);
+        });
       }
 
       el.messagesContainer.appendChild(wrapper);
@@ -815,13 +957,32 @@
           const data = await res.json();
           state.messages[threadId] = data.messages || [];
 
-          if (state.messages[threadId].length === 0) {
+          const blocks = data.enriched_blocks || null;
+          if (blocks && Array.isArray(blocks) && blocks.length > 0) {
+            state.blocks[threadId] = blocks;
+          }
+
+          clearToolCalls();
+          const regularMessages = state.messages[threadId].filter(m => m.type !== 'tool_result');
+          const hasMessages = regularMessages.length > 0;
+          const hasBlocks = state.blocks[threadId] && state.blocks[threadId].length > 0;
+
+          if (!hasMessages && !hasBlocks) {
             el.emptyState.style.display = 'flex';
             el.messagesContainer.appendChild(el.emptyState);
           } else {
             el.emptyState.style.display = 'none';
             for (const msg of state.messages[threadId]) {
-              renderMessageNode(msg);
+              if (msg.type === 'tool_result') {
+                renderToolCallNode(msg);
+              } else {
+                renderMessageNode(msg);
+              }
+            }
+            if (hasBlocks) {
+              for (const block of state.blocks[threadId]) {
+                renderBlockNode(block, threadId);
+              }
             }
           }
         }
@@ -839,6 +1000,7 @@
         state.abortController = null;
         state.isStreaming = false;
       }
+      clearToolCalls();
       setCurrentThread(null);
       renderSessions();
       el.messagesContainer.innerHTML = '';
@@ -855,6 +1017,7 @@
 
       state.sessions = state.sessions.filter(s => s.thread_id !== threadId);
       delete state.messages[threadId];
+      delete state.blocks[threadId];
 
       if (state.currentThreadId === threadId) {
         startNewChat();
@@ -872,6 +1035,7 @@
       }
       state.sessions = [];
       state.messages = {};
+      state.blocks = {};
       startNewChat();
     }
 
@@ -989,6 +1153,28 @@
               activeThinkingTextEl.textContent += data.content;
               scrollToBottom();
             }
+            else if (data.type === 'content_block') {
+              activeAiWrapper = null;
+              activeAiTextEl = null;
+              activeThinkingTextEl = null;
+              if (!state.blocks[state.currentThreadId]) {
+                state.blocks[state.currentThreadId] = [];
+              }
+              state.blocks[state.currentThreadId].push(data);
+              renderBlockNode(data, state.currentThreadId);
+              showLoadingIndicator();
+            }
+            else if (data.type === 'tool_result') {
+              activeAiWrapper = null;
+              activeAiTextEl = null;
+              activeThinkingTextEl = null;
+              if (!state.messages[state.currentThreadId]) {
+                state.messages[state.currentThreadId] = [];
+              }
+              state.messages[state.currentThreadId].push(data);
+              renderToolCallNode(data);
+              showLoadingIndicator();
+            }
             else {
               activeAiWrapper = null;
               activeAiTextEl = null;
@@ -1019,6 +1205,23 @@
               }
               state.messages[state.currentThreadId].push({ usage: data.usage });
               updateSessionTokensWidget();
+            }
+            if (data.response_mode === 'blocks') {
+              const badgeText = (!data.block_count || data.block_count === 0)
+                ? 'No blocks generated'
+                : `Blocks Mode · ${data.block_count} blocks`;
+              const modeBadge = document.createElement('div');
+              modeBadge.className = 'mt-1.5 inline-block text-[9px] px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20';
+              modeBadge.textContent = badgeText;
+              if (activeAiTextEl) {
+                activeAiTextEl.appendChild(modeBadge);
+              } else {
+                const badgeWrapper = document.createElement('div');
+                badgeWrapper.className = 'animate-msg flex items-center gap-2 mb-4 px-2';
+                badgeWrapper.appendChild(modeBadge);
+                el.messagesContainer.appendChild(badgeWrapper);
+                scrollToBottom();
+              }
             }
             await loadSessionsFromDB();
           } else if (event === 'error') {
@@ -1076,6 +1279,14 @@
 
     el.newChatBtn.addEventListener('click', startNewChat);
     el.clearAllBtn.addEventListener('click', clearAllSessions);
+    el.modeNormalBtn?.addEventListener('click', () => setMode('normal'));
+    el.modeBlocksBtn?.addEventListener('click', () => setMode('blocks'));
+    el.toolsPanelToggleBtn?.addEventListener('click', () => {
+      el.toolsPanel?.classList.toggle('hidden');
+    });
+    el.toolsPanelCloseBtn?.addEventListener('click', () => {
+      el.toolsPanel?.classList.add('hidden');
+    });
 
     el.workspaceSetBtn?.addEventListener('click', () => {
       const workspace = el.workspaceInput?.value?.trim();
