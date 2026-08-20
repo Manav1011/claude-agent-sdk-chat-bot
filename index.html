@@ -254,20 +254,6 @@
 
       <!-- Sidebar Footer Status & Token Usage -->
       <div class="p-3 border-t border-dark-border bg-dark-bg/40 text-[11px] space-y-2">
-        <div id="session-token-card" class="bg-dark-surface border border-dark-border rounded-lg p-2 font-mono text-[10px] space-y-1.5">
-          <div class="flex items-center justify-between text-txt-subtle font-sans text-[10px] font-medium border-b border-dark-border/40 pb-1">
-            <span>Session Tokens</span>
-            <span id="session-total-tokens" class="text-brand font-bold">0</span>
-          </div>
-          <div class="flex items-center justify-between text-txt-subtle">
-            <span>Prompt: <strong id="session-input-tokens" class="text-txt-muted">0</strong></span>
-            <span>Completion: <strong id="session-output-tokens" class="text-txt-muted">0</strong></span>
-          </div>
-          <div class="flex items-center justify-between text-txt-subtle border-t border-dark-border/30 pt-1">
-            <span class="flex items-center gap-1">Context: <strong id="session-context-tokens" class="text-amber-400">0</strong></span>
-            <span class="text-[9px] text-txt-subtle/70 font-sans italic">next prompt input</span>
-          </div>
-        </div>
 
         <div class="flex items-center justify-between">
           <span class="text-txt-subtle flex items-center gap-1.5">
@@ -355,7 +341,15 @@
             <div class="flex items-center gap-2 font-mono">
               <span class="px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">Shift + Enter</span> for new line
             </div>
-            
+
+            <!-- Context usage progress bar -->
+            <div id="context-usage-bar" class="hidden items-center gap-2">
+              <div class="w-24 h-1.5 bg-dark-elevated rounded-full overflow-hidden border border-dark-border/50">
+                <div id="context-usage-fill" class="h-full bg-brand rounded-full transition-all duration-300" style="width: 0%"></div>
+              </div>
+              <span id="context-usage-label" class="text-[10px] text-txt-subtle font-mono">0%</span>
+            </div>
+
             <button
               id="send-btn"
               disabled
@@ -425,6 +419,7 @@
       abortController: null,
       currentWorkspace: null,
       workspaceHistory: JSON.parse(localStorage.getItem('qa-workspaces') || '[]'),
+      contextUsage: null,
     };
 
     function setCurrentThread(threadId) {
@@ -452,10 +447,9 @@
       clearAllBtn: document.getElementById('clear-all-sessions-btn'),
       menuToggle: document.getElementById('menu-toggle'),
       connectionStatus: document.getElementById('connection-status'),
-      sessionTotalTokens: document.getElementById('session-total-tokens'),
-      sessionInputTokens: document.getElementById('session-input-tokens'),
-      sessionOutputTokens: document.getElementById('session-output-tokens'),
-      sessionContextTokens: document.getElementById('session-context-tokens'),
+      contextUsageBar: document.getElementById('context-usage-bar'),
+      contextUsageFill: document.getElementById('context-usage-fill'),
+      contextUsageLabel: document.getElementById('context-usage-label'),
       workspaceInput: document.getElementById('workspace-input'),
       workspaceSetBtn: document.getElementById('workspace-set-btn'),
       workspaceStatus: document.getElementById('workspace-status'),
@@ -905,28 +899,7 @@
     }
 
     function updateSessionTokensWidget() {
-      if (!state.currentThreadId) {
-        if (el.sessionTotalTokens) el.sessionTotalTokens.textContent = '0';
-        if (el.sessionInputTokens) el.sessionInputTokens.textContent = '0';
-        if (el.sessionOutputTokens) el.sessionOutputTokens.textContent = '0';
-        if (el.sessionContextTokens) el.sessionContextTokens.textContent = '0';
-        return;
-      }
-      const msgs = getSessionMessages(state.currentThreadId);
-      let inp = 0, out = 0, tot = 0, context = 0;
-      for (const m of msgs) {
-        if (m.usage) {
-          inp += m.usage.input_tokens || 0;
-          out += m.usage.output_tokens || 0;
-          tot += m.usage.total_tokens || 0;
-          // Context = latest (max) input_tokens — what the next prompt will receive
-          context = Math.max(context, m.usage.input_tokens || 0);
-        }
-      }
-      if (el.sessionTotalTokens) el.sessionTotalTokens.textContent = tot.toLocaleString();
-      if (el.sessionInputTokens) el.sessionInputTokens.textContent = inp.toLocaleString();
-      if (el.sessionOutputTokens) el.sessionOutputTokens.textContent = out.toLocaleString();
-      if (el.sessionContextTokens) el.sessionContextTokens.textContent = context.toLocaleString();
+      // Legacy — tokens now shown via context bar
     }
 
     // ============== API Interactions ==============
@@ -1091,6 +1064,11 @@
         for await (const { event, data } of streamChat(text, state.currentThreadId, state.abortController.signal)) {
           if (event === 'message') {
             if (data.type === 'human') continue;
+            if (data.type === 'context_usage') {
+              state.contextUsage = data.data;
+              updateContextBar(data.data);
+              continue;
+            }
 
             hideLoadingIndicator();
 
@@ -1304,6 +1282,68 @@
         }
       }
     });
+
+    // ============== Context Usage ==============
+    function updateContextBar(ctx) {
+      if (!ctx || !el.contextUsageBar) return;
+      const pct = ctx.percentage || 0;
+      el.contextUsageBar.classList.remove('hidden');
+      el.contextUsageBar.classList.add('flex');
+      el.contextUsageFill.style.width = pct + '%';
+      el.contextUsageLabel.textContent = pct + '%';
+    }
+
+    function showContextModal() {
+      const ctx = state.contextUsage;
+      if (!ctx) return;
+      const max = ctx.maxTokens || 180000;
+
+      // Active categories (excluding free/inactive space)
+      const INACTIVE = ['Free space', 'Autocompact buffer'];
+      const activeCats = (ctx.categories || []).filter(c => !INACTIVE.includes(c.name));
+      const inactiveCats = (ctx.categories || []).filter(c => INACTIVE.includes(c.name));
+
+      const totalUsed = activeCats.reduce((s, c) => s + c.tokens, 0);
+      const pct = max > 0 ? Math.round(totalUsed / max * 100) : 0;
+      const totalFree = inactiveCats.reduce((s, c) => s + c.tokens, 0);
+
+      // Build category rows (active only)
+      const catRows = activeCats.map(c =>
+        `<tr><td class="py-1 px-2">${c.name}</td><td class="py-1 px-2 text-right font-mono">${c.tokens.toLocaleString()}</td><td class="py-1 px-2 text-right text-txt-subtle">${max > 0 ? Math.round(c.tokens / max * 100) : 0}%</td></tr>`
+      ).join('');
+
+      const modal = document.createElement('div');
+      modal.id = 'context-modal';
+      modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm';
+      modal.innerHTML = `
+        <div class="bg-dark-elevated border border-dark-border rounded-2xl shadow-2xl w-80 max-h-[80vh] overflow-y-auto">
+          <div class="p-4 border-b border-dark-border flex items-center justify-between">
+            <h3 class="text-sm font-medium text-txt-main">Context Window</h3>
+            <button onclick="this.closest('#context-modal').remove()" class="text-txt-subtle hover:text-txt-main">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="p-4">
+            <div class="text-center mb-4">
+              <div class="text-2xl font-bold text-brand">${totalUsed.toLocaleString()}</div>
+              <div class="text-xs text-txt-subtle">of ${max.toLocaleString()} tokens (${pct}%)</div>
+              <div class="w-full h-2 bg-dark-bg rounded-full mt-2 overflow-hidden border border-dark-border/50">
+                <div class="h-full bg-brand rounded-full" style="width: ${pct}%"></div>
+              </div>
+            </div>
+            <table class="w-full text-xs mb-4">
+              <thead><tr class="text-txt-subtle border-b border-dark-border/50"><th class="text-left py-1 px-2 font-medium">Category</th><th class="text-right py-1 px-2 font-medium">Tokens</th><th class="text-right py-1 px-2 font-medium">%</th></tr></thead>
+              <tbody class="text-txt-main">${catRows}</tbody>
+            </table>
+            <div class="border-t border-dark-border/50 pt-2">
+              <div class="text-xs text-txt-subtle">Free space: <strong class="text-txt-main font-mono">${totalFree.toLocaleString()}</strong> tokens</div>
+            </div>
+          </div>
+        </div>
+      `;
+      modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+      document.body.appendChild(modal);
+    }
 
     el.menuToggle?.addEventListener('click', () => {
       el.sidebar.classList.toggle('-translate-x-full');
