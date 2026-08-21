@@ -1,279 +1,123 @@
-# Blocks Mode Implementation Guide
+# Blocks Mode — Implementation Guide (Backend)
 
 ## Overview
 
 **Blocks mode** is an optional structured response format that returns organized content blocks with both Markdown rendering and spoken explanations for text-to-speech (TTS).
 
-When you send a message to `/api/chat`, you can choose:
-- **Normal mode** (default): Traditional streaming text with tool results
-- **Blocks mode**: Structured blocks with UUIDs and sequence IDs
-
-**No frontend changes required.** The API contract is backward-compatible.
-
----
-
-## How to Enable Blocks Mode
-
-Add `response_mode: "blocks"` to the chat request:
-
-```bash
-# Normal mode (default - same as before)
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What is Python?", "response_mode": "normal"}'
-
-# Blocks mode (new)
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What is Python?", "response_mode": "blocks"}'
-```
-
----
+Enable with `response_mode: "blocks"` in the chat request.
 
 ## Request Schema
 
 ```python
 class ChatRequest(BaseModel):
-    message: str                              # User message (required)
-    thread_id: str | None = None             # Session ID (optional)
-    workspace: str | None = None             # Workspace path (optional)
-    response_mode: Literal["normal", "blocks"] = "normal"  # NEW
+    message: str
+    thread_id: str | None = None
+    workspace: str | None = None
+    response_mode: Literal["normal", "blocks"] = "normal"
 ```
 
-| Field | Values | Default | Description |
-|-------|--------|---------|-------------|
-| `response_mode` | `"normal"` or `"blocks"` | `"normal"` | Response format |
+## SSE Event Flow
 
----
-
-## Response Schema Comparison
-
-### Normal Mode SSE Response
-
-```json
-// Thinking
-{"type": "thinking_delta", "content": "The user is asking about Python..."}
-
-// Text
-{"type": "text_delta", "content": "Python"}
-{"type": "text_delta", "content": " is a programming"}
-
-// Tool calls
-{"type": "tool_result", "name": "read_file", "input": {"path": "code.py"}, "content": "file contents"}
-
-// Done
-{"thread_id": "session-abc123", "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}}
+### Normal Mode
+```
+1. thinking_delta*        ← Model thinking (streaming)
+2. text_delta*            ← Response text (streaming)
+3. tool_result*           ← MCP tool calls (if any)
+4. context_usage          ← Token usage breakdown
+5. done                   ← Final event with usage and response_mode
 ```
 
-### Blocks Mode SSE Response
-
-```json
-// Thinking (same as normal mode)
-{"type": "thinking_delta", "content": "The user wants a structured response..."}
-
-// Tool calls (same as normal mode)
-{"type": "tool_result", "name": "read_file", "input": {"path": "code.py"}, "content": "..."}
-
-// Content blocks (NEW - emitted atomically after processing)
-{"type": "content_block", "uuid": "550e8400-e29b-41d4-a716-446655440000", "sequence_id": 1, "markdown": "```python\ndef hello():\n    print('Hi')\n```", "spoken_explanation": "Here is a Python function called hello that prints Hi."}
-
-// Done (with block count)
-{"thread_id": "session-abc123", "usage": {...}, "response_mode": "blocks", "block_count": 2}
+### Blocks Mode
+```
+1. thinking_delta*        ← Model thinking (streaming)
+2. tool_result*           ← MCP tool calls (if any)
+3. error                  ← Sent ONLY if structured output fails
+4. content_block*         ← Enriched blocks (atomic, one event per block)
+5. done                   ← Final event with response_mode="blocks" and block_count
 ```
 
----
+**Emission order guarantee:** `content_block` events are emitted to the client BEFORE persisting to the database. If the database write fails, the client has already received the blocks.
+
+**Error handling:** If the LLM does not return valid structured output, the server emits an `error` SSE event followed by a `done` event with `response_mode: "normal"` (fallback to normal mode).
 
 ## Content Block Schema
 
 ### LLM-Generated (What the model produces)
-
 ```python
 class ContentBlock(BaseModel):
-    """Single content block with Markdown and spoken explanation."""
-    markdown: str = Field(
-        description="Markdown content for visual rendering."
-    )
-    spoken_explanation: str = Field(
-        description="Natural-language explanation for TTS."
-    )
-
+    markdown: str           # Markdown for visual rendering
+    spoken_explanation: str # Natural-language explanation for TTS
 
 class AgentResponse(BaseModel):
-    """Structured response from the model."""
     blocks: list[ContentBlock]
 ```
 
-**The model MUST generate blocks.** It can include as many blocks as it wants.
-
 ### Server-Enriched (What the API emits)
-
 ```python
 class EnrichedContentBlock(BaseModel):
-    """ContentBlock with server-generated identity."""
-    uuid: str                              # Server-generated UUID
-    sequence_id: int                       # 1-based sequential position
-    markdown: str                          # From model
-    spoken_explanation: str                # From model
+    uuid: str               # Deterministic UUID (hash of sequence_id + markdown)
+    sequence_id: int        # 1-based sequential position
+    markdown: str           # From model
+    spoken_explanation: str # From model
 ```
 
-**Key points:**
-- `uuid` and `sequence_id` are **added by the server**, never generated by the model
-- Each block is enriched atomically (not streamed token-by-token)
-- Blocks are emitted in order after the model finishes
-
----
-
-## SSE Event Flow (Blocks Mode)
-
-```text
-1. thinking_delta*      ← Model thinking (streaming)
-2. tool_result*         ← MCP tool calls (if any)
-3. content_block*       ← Server-enriched blocks (after processing)
-4. done                 ← Final event with response_mode and block_count
-```
-
-**Important:** Content blocks are emitted **after** the model finishes. The server:
-1. Receives the model's `AgentResponse` structured output
-2. Validates it (Pydantic validation)
-3. Adds UUIDs and sequence_ids
-4. Persists to database
-5. Emits `content_block` events
-
----
+**UUID stability:** The same block content + sequence_id always produces the same UUID via `uuid.uuid5(NAMESPACE_URL, f"{i}:{markdown[:200]}")`.
 
 ## Persistence
 
-Blocks are persisted in the `session_meta` table:
+Blocks are stored in the `enriched_blocks` table:
 
 ```sql
-ALTER TABLE session_meta ADD COLUMN enriched_blocks TEXT DEFAULT '[]';
+CREATE TABLE enriched_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL,
+    message_index INTEGER NOT NULL,
+    blocks_json TEXT NOT NULL
+);
+CREATE UNIQUE INDEX uq_enriched_blocks_thread_message
+    ON enriched_blocks (thread_id, message_index);
 ```
 
-- **`enriched_blocks`**: JSON array of `EnrichedContentBlock` objects
-- **UUID stability**: Once persisted, UUIDs remain the same across server restarts
-- **Retrieval**: Use `/api/sessions/{thread_id}/messages` to get blocks
+- `thread_id` = SDK session UUID
+- `message_index` = 0 for first message, 1 for second, etc.
+- Blocks are stored per-message, not per-session (no overwrites)
+- `_get_enriched_blocks` returns the latest message's blocks
 
-### Example: Retrieving Blocks
+## Error Handling
 
-```bash
-curl http://localhost:8000/api/sessions/{thread_id}/messages
-```
-
-```json
-{
-  "thread_id": "session-abc123",
-  "messages": [...],
-  "enriched_blocks": [
-    {
-      "uuid": "550e8400-e29b-41d4-a716-446655440000",
-      "sequence_id": 1,
-      "markdown": "```python\ndef hello():\n    print('Hi')\n```",
-      "spoken_explanation": "Here is a Python function called hello that prints Hi."
-    }
-  ]
-}
-```
-
----
+| Error | SSE Event | Response |
+|-------|-----------|----------|
+| LLM returns no structured_output | `error` | `done` with `response_mode: "normal"` |
+| LLM returns malformed JSON | `error` | `done` with `response_mode: "normal"` |
+| DB write fails (after emit) | (none) | `done` with `response_mode: "blocks"` (blocks already delivered) |
 
 ## How It Works Internally
 
-### 1. Two Agents Per Workspace
-
-The system maintains two separate agents per workspace:
-- **Normal agent**: `response_format=None` (existing behavior)
-- **Blocks agent**: `response_format=AgentResponse` (structured output)
-
-```python
-_WORKSPACE_AGENTS = {
-    "/tmp": (normal_agent, blocks_agent),
-    ...
-}
-```
-
-### 2. Structured Output Detection
-
-When `response_format=AgentResponse` is set, the model:
-1. Generates a tool call to `AgentResponse`
-2. Stream emits `tool_use` + `input_json_delta` chunks
-3. Framework parses JSON into `AgentResponse` object
-4. We check `result["structured_response"]` after streaming
-
-**Key:** `result["structured_response"]` is already parsed - no manual JSON parsing!
-
-### 3. Block Enrichment
-
-```python
-def _enrich_blocks(blocks: list[ContentBlock]) -> list[EnrichedContentBlock]:
-    enriched = []
-    for i, block in enumerate(blocks, start=1):
-        enriched.append(EnrichedContentBlock(
-            uuid=uuid.uuid4().hex,
-            sequence_id=i,
-            markdown=block.markdown,
-            spoken_explanation=block.spoken_explanation,
-        ))
-    return enriched
-```
-
-### 4. Persistence
-
-```python
-async def _persist_enriched_blocks(thread_id: str, blocks: list[EnrichedContentBlock]):
-    conn, _ = await get_db()
-    json_str = json.dumps([b.model_dump() for b in blocks])
-    await conn.execute(
-        "UPDATE session_meta SET enriched_blocks = ? WHERE thread_id = ?",
-        (json_str, thread_id)
-    )
-    await conn.commit()
-```
-
----
+1. Frontend sends `POST /api/chat` with `response_mode: "blocks"`
+2. Backend sets `opts.output_format` to `{"type": "json_schema", "schema": AgentResponse.model_json_schema()}`
+3. SDK client receives `AgentResponse` structured output on `ResultMessage.structured_output`
+4. Backend validates via `AgentResponse(**msg.structured_output)`
+5. Backend calls `_enrich_blocks()` which generates deterministic UUIDs
+6. Backend emits `content_block` SSE events to client
+7. Backend persists blocks to DB (non-fatal if it fails)
+8. Backend emits `done` event with `response_mode: "blocks"` and `block_count`
 
 ## Testing
 
-### Test Blocks Mode
+The test suite (`tests/test_blocks_*.py`) covers:
+- `test_blocks_core.py` — `_enrich_blocks` deterministic UUIDs
+- `test_blocks_stream.py` — SSE flow with live server
+- `test_blocks_db.py` — per-message persistence
+- `test_blocks_concurrency.py` — TOCTOU safety
+- `test_blocks_tools.py` — tool event emission
 
-```bash
-# Simple blocks response
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What is Python?", "response_mode": "blocks"}'
-
-# Verify blocks were generated
-curl http://localhost:8000/api/sessions/{thread_id}/messages
-# Response should include "enriched_blocks" with UUIDs
-```
-
-### Expected Response
-
-```
-thinking_delta: "I should explain Python in a structured way..."
-content_block: uuid=..., sequence_id=1, markdown="Python is...", spoken_explanation="Python is a high-level programming language..."
-content_block: uuid=..., sequence_id=2, markdown="```python\nprint('Hello')\n```", spoken_explanation="Here is a simple Python example..."
-done: response_mode="blocks", block_count=2
-```
-
----
-
-## Migration from Normal Mode
-
-| Aspect | Normal Mode | Blocks Mode |
-|--------|-------------|-------------|
-| Response format | Streaming text | Structured blocks |
-| UUIDs | None | Server-generated |
-| Persistence | `enriched_blocks` column | Same column |
-| Frontend changes | None | None (backward compatible) |
-| LLM behavior | Free-form | Must generate `AgentResponse` |
-
----
+Run: `python -m pytest tests/test_blocks_*.py -v`
 
 ## Future Extension: Block-Context Questions
 
 ```bash
 # User asks about a specific block
-curl -X POST http://localhost:8000/api/blocks/{uuid}/explain \
+curl -X POST http://localhost:8225/api/blocks/{uuid}/explain \
   -H "Content-Type: application/json" \
   -d '{"message": "Can you explain this further?"}'
 ```
@@ -282,25 +126,4 @@ This would:
 1. Retrieve block by UUID
 2. Add block context to prompt
 3. Generate response with reference to the block
-
----
-
-## Summary
-
-**Blocks mode adds:**
-- `response_mode: "blocks"` parameter to `ChatRequest`
-- `content_block` SSE event with `uuid`, `sequence_id`, `markdown`, `spoken_explanation`
-- `done` event with `response_mode` and `block_count`
-- `enriched_blocks` column in `session_meta`
-
-**Blocks mode does NOT change:**
-- Normal mode behavior
-- Existing endpoints
-- Database schema (except new column)
-- Frontend (if any)
-
-**Blocks mode enables:**
-- Structured content for rendering
-- TTS-friendly spoken explanations
-- UUID-based block references
-- Persistence across restarts
+```

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -69,6 +70,8 @@ app.add_middleware(
 # Per-workspace SDK client cache (for context_usage queries between requests)
 _WORKSPACE_CLIENTS: dict[str, ClaudeSDKClient] = {}
 _db_conn = None
+_db_lock = asyncio.Lock()
+_cache_lock = asyncio.Lock()
 
 
 # ============== SDK Helpers ==============
@@ -128,7 +131,7 @@ def _read_sdk_history(workspace: str, session_id: str) -> list[dict]:
 
 def _build_options(workspace: str, session_id: str | None = None, resume: bool = False) -> ClaudeAgentOptions:
     opts = ClaudeAgentOptions(
-        model="Minimax-M2.7",
+        model="ornith-1.0",
         env={
             "ANTHROPIC_API_KEY": LLM_API_KEY,
             "ANTHROPIC_BASE_URL": LLM_BASE_URL,
@@ -141,42 +144,69 @@ def _build_options(workspace: str, session_id: str | None = None, resume: bool =
     return opts
 
 
-# ============== Database (enriched_blocks only) ==============
+# ============== Database (per-message enriched_blocks) ==============
 
 async def get_db():
     """Get persistent SQLite connection for enriched_blocks."""
     global _db_conn
-    if _db_conn is None:
-        _db_conn = await aiosqlite.connect(str(Path(__file__).parent / "chat_memory.db"))
+    if _db_conn is not None:
+        return _db_conn
 
-        # enriched_blocks: thread_id -> JSON of enriched blocks
-        await _db_conn.execute("""
-            CREATE TABLE IF NOT EXISTS enriched_blocks (
-                thread_id TEXT PRIMARY KEY,
-                blocks_json TEXT NOT NULL
+    async with _db_lock:
+        # Double-check after acquiring lock
+        if _db_conn is not None:
+            return _db_conn
+        try:
+            _db_conn = await aiosqlite.connect(
+                str(Path(__file__).parent / "chat_memory.db")
             )
-        """)
-
-        await _db_conn.commit()
+            await _db_conn.execute("""
+                CREATE TABLE IF NOT EXISTS enriched_blocks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    thread_id TEXT NOT NULL,
+                    message_index INTEGER NOT NULL,
+                    blocks_json TEXT NOT NULL
+                )
+            """)
+            await _db_conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                    uq_enriched_blocks_thread_message
+                ON enriched_blocks (thread_id, message_index)
+            """)
+            await _db_conn.commit()
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize DB: {e}")
+            raise
 
     return _db_conn
 
 
-async def _persist_enriched_blocks(session_id: str, blocks: list[EnrichedContentBlock]) -> None:
+async def _persist_enriched_blocks(
+    session_id: str, blocks: list[EnrichedContentBlock], message_index: int = 0
+) -> None:
+    """Persist blocks for a specific message in a session.
+
+    message_index=0 is the first message in a thread, 1 is the second, etc.
+    """
     conn = await get_db()
     blocks_json = json.dumps([b.model_dump() for b in blocks])
     await conn.execute(
-        "INSERT OR REPLACE INTO enriched_blocks (thread_id, blocks_json) VALUES (?, ?)",
-        (session_id, blocks_json),
+        """INSERT OR REPLACE INTO enriched_blocks
+           (thread_id, message_index, blocks_json)
+           VALUES (?, ?, ?)""",
+        (session_id, message_index, blocks_json),
     )
     await conn.commit()
 
 
 async def _get_enriched_blocks(session_id: str) -> list[EnrichedContentBlock] | None:
+    """Get the latest message's blocks for a session (message_index=0)."""
     conn = await get_db()
     async with conn.cursor() as cursor:
         await cursor.execute(
-            "SELECT blocks_json FROM enriched_blocks WHERE thread_id = ?",
+            """SELECT blocks_json FROM enriched_blocks
+               WHERE thread_id = ?
+               ORDER BY message_index DESC LIMIT 1""",
             (session_id,),
         )
         row = await cursor.fetchone()
@@ -184,9 +214,9 @@ async def _get_enriched_blocks(session_id: str) -> list[EnrichedContentBlock] | 
             try:
                 blocks_data = json.loads(row[0])
                 return [EnrichedContentBlock(**b) for b in blocks_data]
-            except (json.JSONDecodeError, Exception):
+            except json.JSONDecodeError:
                 return None
-        return None
+    return None
 
 
 # ============== SSE Helper ==============
@@ -421,12 +451,13 @@ async def chat(request: ChatRequest):
         try:
             # Reuse cached client for this session to enable get_context_usage()
             cache_key = f"{workspace}:{session_id}"
-            if cache_key in _WORKSPACE_CLIENTS:
-                client = _WORKSPACE_CLIENTS[cache_key]
-            else:
-                client = ClaudeSDKClient(options=opts)
-                await client.connect()
-                _WORKSPACE_CLIENTS[cache_key] = client
+            async with _cache_lock:
+                if cache_key in _WORKSPACE_CLIENTS:
+                    client = _WORKSPACE_CLIENTS[cache_key]
+                else:
+                    client = ClaudeSDKClient(options=opts)
+                    await client.connect()
+                    _WORKSPACE_CLIENTS[cache_key] = client
 
             await client.query(prompt=request.message)
 
@@ -478,6 +509,26 @@ async def chat(request: ChatRequest):
                                 turn_usage["input_tokens"] + turn_usage["output_tokens"]
                             )
 
+                    elif evt_type == "content_block_stop":
+                        # Track when a tool_use content block finishes
+                        pass
+
+                    elif evt_type == "message_stop":
+                        # Emit any pending tool calls as tool_result events
+                        for idx, tool_data in pending_tools.items():
+                            args_str = tool_data.get("args_str", "")
+                            try:
+                                args_json = json.loads(args_str) if args_str else {}
+                            except json.JSONDecodeError:
+                                args_json = {}
+                            yield format_sse("message", {
+                                "type": "tool_result",
+                                "tool_name": tool_data["name"],
+                                "tool_id": tool_data["id"],
+                                "args": args_json,
+                            })
+                        pending_tools.clear()
+
                 # --- ResultMessage ---
                 elif isinstance(msg, ResultMessage):
                     print(f"[USAGE] input={turn_usage['input_tokens']} output={turn_usage['output_tokens']} total={turn_usage['total_tokens']} model_usage={msg.model_usage} usage={msg.usage} cost=${msg.total_cost_usd}")
@@ -506,36 +557,63 @@ async def chat(request: ChatRequest):
                         print(f"[WARN] get_context_usage failed: {e}")
 
                     # Blocks mode: structured output
-                    if blocks_mode and msg.structured_output:
-                        try:
-                            agent_resp = AgentResponse(**msg.structured_output)
-                            enriched = _enrich_blocks(agent_resp.blocks)
-                            await _persist_enriched_blocks(session_id, enriched)
-
-                            for block in enriched:
-                                yield format_sse("message", {
-                                    "type": "content_block",
-                                    "uuid": block.uuid,
-                                    "sequence_id": block.sequence_id,
-                                    "markdown": block.markdown,
-                                    "spoken_explanation": block.spoken_explanation,
-                                })
-
+                    if blocks_mode:
+                        if not msg.structured_output:
+                            # LLM did not return structured output — emit error and fall back
+                            yield format_sse("error", {
+                                "message": "LLM did not return structured blocks. Falling back to normal mode.",
+                            })
                             yield format_sse("done", {
                                 "thread_id": session_id,
                                 "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                                "response_mode": "blocks",
-                                "block_count": len(enriched),
+                                "response_mode": "normal",
                             })
                             return
 
+                        try:
+                            agent_resp = AgentResponse(**msg.structured_output)
                         except Exception as e:
-                            print(f"Error processing structured output: {e}")
+                            yield format_sse("error", {
+                                "message": f"Structured output validation failed: {e}",
+                            })
+                            yield format_sse("done", {
+                                "thread_id": session_id,
+                                "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
+                                "response_mode": "normal",
+                            })
+                            return
+
+                        enriched = _enrich_blocks(agent_resp.blocks)
+
+                        # Emit content_block SSE events FIRST
+                        for block in enriched:
+                            yield format_sse("message", {
+                                "type": "content_block",
+                                "uuid": block.uuid,
+                                "sequence_id": block.sequence_id,
+                                "markdown": block.markdown,
+                                "spoken_explanation": block.spoken_explanation,
+                            })
+
+                        # THEN persist to DB — failure here does not lose blocks from the user
+                        try:
+                            await _persist_enriched_blocks(session_id, enriched)
+                        except Exception as e:
+                            print(f"[WARN] Failed to persist blocks: {e}")
+                            # Non-fatal: blocks were already delivered to the client
+
+                        yield format_sse("done", {
+                            "thread_id": session_id,
+                            "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
+                            "response_mode": "blocks",
+                            "block_count": len(enriched),
+                        })
+                        return
 
                     yield format_sse("done", {
                         "thread_id": session_id,
                         "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                        "response_mode": "blocks" if blocks_mode else "normal",
+                        "response_mode": "normal",
                     })
                     return
 
@@ -558,7 +636,7 @@ async def chat(request: ChatRequest):
 def _enrich_blocks(blocks: list[ContentBlock]) -> list[EnrichedContentBlock]:
     return [
         EnrichedContentBlock(
-            uuid=str(uuid.uuid4()),
+            uuid=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{i}:{b.markdown[:200]}")),
             sequence_id=i + 1,
             markdown=b.markdown,
             spoken_explanation=b.spoken_explanation,

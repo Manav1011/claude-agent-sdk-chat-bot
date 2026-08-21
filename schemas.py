@@ -49,7 +49,7 @@ class EnrichedContentBlock(BaseModel):
     """
     
     uuid: str = Field(
-        description="Server-generated UUID. Stable across restarts."
+        description="Stable across calls for the same block content. Deterministic hash from sequence_id and markdown content."
     )
     sequence_id: int = Field(
         description="1-based sequential position within the response."
