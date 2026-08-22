@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../auto-data-intelligence/nkproteins-wren-api"
+		},
+		{
+			"path": "../gpt-driver-mcp"
+		},
+		{
+			"path": "../office-beacon-fe"
+		},
+		{
+			"path": "../ocr-pipeline"
+		}
+	],
+	"settings": {}
+}

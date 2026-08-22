@@ -343,11 +343,11 @@
             </div>
 
             <!-- Context usage progress bar -->
-            <div id="context-usage-bar" class="hidden items-center gap-2">
-              <div class="w-24 h-1.5 bg-dark-elevated rounded-full overflow-hidden border border-dark-border/50">
-                <div id="context-usage-fill" class="h-full bg-brand rounded-full transition-all duration-300" style="width: 0%"></div>
-              </div>
-              <span id="context-usage-label" class="text-[10px] text-txt-subtle font-mono">0%</span>
+            <div id="context-usage-bar" class="hidden items-center gap-1.5 cursor-pointer font-mono text-[11px] select-none text-brand hover:brightness-110 transition-all" onclick="showContextModal()" title="View context breakdown">
+              <span class="text-brand font-bold">[</span>
+              <span id="context-usage-blocks" class="tracking-tight inline-flex leading-none"></span>
+              <span class="text-brand font-bold">]</span>
+              <span id="context-usage-label" class="text-[10px] font-mono text-brand font-medium">0%</span>
             </div>
 
             <button
@@ -448,7 +448,7 @@
       menuToggle: document.getElementById('menu-toggle'),
       connectionStatus: document.getElementById('connection-status'),
       contextUsageBar: document.getElementById('context-usage-bar'),
-      contextUsageFill: document.getElementById('context-usage-fill'),
+      contextUsageBlocks: document.getElementById('context-usage-blocks'),
       contextUsageLabel: document.getElementById('context-usage-label'),
       workspaceInput: document.getElementById('workspace-input'),
       workspaceSetBtn: document.getElementById('workspace-set-btn'),
@@ -918,6 +918,8 @@
     async function selectSession(threadId) {
       setCurrentThread(threadId);
       renderSessions();
+      state.contextUsage = null;
+      updateContextBar(null);
 
       el.messagesContainer.innerHTML = '';
       showLoadingIndicator();
@@ -974,6 +976,8 @@
         state.isStreaming = false;
       }
       clearToolCalls();
+      state.contextUsage = null;
+      updateContextBar(null);
       setCurrentThread(null);
       renderSessions();
       el.messagesContainer.innerHTML = '';
@@ -1025,6 +1029,7 @@
       el.emptyState.style.display = 'none';
 
       // Ensure thread ID
+      const isNewSession = !state.currentThreadId;
       if (!state.currentThreadId) {
         state.currentThreadId = `session-${Date.now().toString(36)}`;
       }
@@ -1162,7 +1167,8 @@
             }
           } else if (event === 'done') {
             hideLoadingIndicator();
-            if (data.thread_id && data.thread_id !== state.currentThreadId) {
+            const threadChanged = data.thread_id && data.thread_id !== state.currentThreadId;
+            if (threadChanged) {
               setCurrentThread(data.thread_id);
             }
             if (data.usage) {
@@ -1201,7 +1207,9 @@
                 scrollToBottom();
               }
             }
-            await loadSessionsFromDB();
+            if (isNewSession || threadChanged) {
+              await loadSessionsFromDB();
+            }
           } else if (event === 'error') {
             showError(data.message || 'Stream processing failed');
           }
@@ -1285,12 +1293,24 @@
 
     // ============== Context Usage ==============
     function updateContextBar(ctx) {
-      if (!ctx || !el.contextUsageBar) return;
+      if (!el.contextUsageBar) return;
+      if (!ctx) {
+        el.contextUsageBar.classList.add('hidden');
+        el.contextUsageBar.classList.remove('flex');
+        return;
+      }
       const pct = ctx.percentage || 0;
+      const totalBlocks = 20;
+      const filled = Math.min(totalBlocks, Math.max(0, Math.round((pct / 100) * totalBlocks)));
+      const empty = totalBlocks - filled;
+      if (el.contextUsageBlocks) {
+        el.contextUsageBlocks.innerHTML = `<span class="text-brand">${'█'.repeat(filled)}</span><span class="text-brand/35">${'░'.repeat(empty)}</span>`;
+      }
+      if (el.contextUsageLabel) {
+        el.contextUsageLabel.textContent = pct + '%';
+      }
       el.contextUsageBar.classList.remove('hidden');
       el.contextUsageBar.classList.add('flex');
-      el.contextUsageFill.style.width = pct + '%';
-      el.contextUsageLabel.textContent = pct + '%';
     }
 
     function showContextModal() {
