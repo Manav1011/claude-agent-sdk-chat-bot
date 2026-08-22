@@ -340,6 +340,10 @@
           <div class="flex items-center justify-between border-t border-dark-border/40 pt-2.5 mt-1 text-[11px] text-txt-subtle">
             <div class="flex items-center gap-2 font-mono">
               <span class="px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">Shift + Enter</span> for new line
+              <button id="blocks-toggle-btn" type="button" class="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-sans font-medium border transition-colors cursor-pointer select-none">
+                <span id="blocks-toggle-dot" class="w-1.5 h-1.5 rounded-full"></span>
+                <span id="blocks-toggle-text">Blocks: OFF</span>
+              </button>
             </div>
 
             <!-- Context usage progress bar -->
@@ -414,6 +418,7 @@
       sessions: [],
       messages: {},
       currentMode: 'normal',
+      enableBlocks: localStorage.getItem('qa-enable-blocks') === 'true',
       blocks: {},
       isStreaming: false,
       abortController: null,
@@ -450,6 +455,9 @@
       contextUsageBar: document.getElementById('context-usage-bar'),
       contextUsageBlocks: document.getElementById('context-usage-blocks'),
       contextUsageLabel: document.getElementById('context-usage-label'),
+      blocksToggleBtn: document.getElementById('blocks-toggle-btn'),
+      blocksToggleDot: document.getElementById('blocks-toggle-dot'),
+      blocksToggleText: document.getElementById('blocks-toggle-text'),
       workspaceInput: document.getElementById('workspace-input'),
       workspaceSetBtn: document.getElementById('workspace-set-btn'),
       workspaceStatus: document.getElementById('workspace-status'),
@@ -465,6 +473,7 @@
 
     function setMode(mode) {
       if (state.currentMode === mode) return;
+      stopBlocksAudio();
       if (state.isStreaming && state.abortController) {
         state.abortController.abort();
         state.abortController = null;
@@ -477,6 +486,22 @@
       } else {
         if (el.modeNormalBtn) el.modeNormalBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors bg-brand text-white font-medium shadow-sm';
         if (el.modeBlocksBtn) el.modeBlocksBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors text-txt-subtle hover:text-white';
+      }
+      if (state.currentThreadId && !state.isStreaming) {
+        renderCurrentSessionView(state.currentThreadId);
+      }
+    }
+
+    function updateBlocksToggleUI() {
+      if (!el.blocksToggleBtn) return;
+      if (state.enableBlocks) {
+        el.blocksToggleBtn.className = 'flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-sans font-medium border transition-colors cursor-pointer select-none bg-brand/10 border-brand/40 text-brand hover:bg-brand/20';
+        if (el.blocksToggleDot) el.blocksToggleDot.className = 'w-1.5 h-1.5 rounded-full bg-brand';
+        if (el.blocksToggleText) el.blocksToggleText.textContent = 'Blocks: ON';
+      } else {
+        el.blocksToggleBtn.className = 'flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-sans font-medium border transition-colors cursor-pointer select-none bg-dark-elevated border-dark-border text-txt-subtle hover:text-white';
+        if (el.blocksToggleDot) el.blocksToggleDot.className = 'w-1.5 h-1.5 rounded-full bg-txt-subtle';
+        if (el.blocksToggleText) el.blocksToggleText.textContent = 'Blocks: OFF';
       }
     }
 
@@ -558,7 +583,7 @@
           message, 
           thread_id: threadId,
           workspace: state.currentWorkspace || undefined,
-          response_mode: state.currentMode,
+          response_mode: state.enableBlocks ? 'blocks' : 'normal',
         }),
         signal,
       });
@@ -758,14 +783,204 @@
       if (el.toolsBadgeBtn) el.toolsBadgeBtn.textContent = count;
     }
 
-    function renderBlockNode(block, threadId) {
+    // ============== Blocks Audio Walkthrough Player ==============
+    const audioPlayer = {
+      isPlaying: false,
+      currentIndex: 0,
+      rate: 1.0,
+      blocks: [],
+      threadId: null,
+    };
+
+    function stopBlocksAudio() {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      audioPlayer.isPlaying = false;
+      document.querySelectorAll('.block-card-container').forEach(card => {
+        card.classList.remove('ring-2', 'ring-brand', 'border-brand', 'shadow-glow');
+        const playBtn = card.querySelector('.block-play-btn');
+        if (playBtn) {
+          playBtn.className = 'block-play-btn flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2 py-0.5 rounded border border-brand/20 transition-colors';
+          playBtn.innerHTML = `<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span>Listen</span>`;
+        }
+      });
+      updateAudioPlayerBarUI();
+    }
+
+    function updateAudioPlayerBarUI() {
+      const playIcon = document.getElementById('audio-play-icon');
+      const playLabel = document.getElementById('audio-play-label');
+      const statusText = document.getElementById('audio-status-text');
+      const speedBtn = document.getElementById('audio-speed-btn');
+
+      if (speedBtn) speedBtn.textContent = `${audioPlayer.rate}x`;
+
+      if (audioPlayer.isPlaying) {
+        if (playIcon) playIcon.innerHTML = `<path stroke="currentColor" stroke-width="2.5" stroke-linecap="round" d="M10 6v12M14 6v12"/>`;
+        if (playLabel) playLabel.textContent = 'Pause';
+        if (statusText) {
+          const curSeq = audioPlayer.blocks[audioPlayer.currentIndex]?.sequence_id ?? (audioPlayer.currentIndex + 1);
+          statusText.innerHTML = `<span class="text-brand font-medium">Playing Section ${curSeq} of ${audioPlayer.blocks.length}</span>`;
+        }
+      } else {
+        if (playIcon) playIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
+        if (playLabel) playLabel.textContent = 'Play All';
+        if (statusText) statusText.textContent = audioPlayer.blocks.length > 0 ? `Ready · ${audioPlayer.blocks.length} sections` : 'Ready';
+      }
+    }
+
+    function playBlockAtIndex(index, blocks, threadId) {
+      if (!('speechSynthesis' in window) || !blocks || blocks.length === 0) return;
+      if (index < 0 || index >= blocks.length) {
+        stopBlocksAudio();
+        return;
+      }
+
+      window.speechSynthesis.cancel();
+      audioPlayer.blocks = blocks;
+      audioPlayer.threadId = threadId;
+      audioPlayer.currentIndex = index;
+      audioPlayer.isPlaying = true;
+
+      // Update block highlights
+      document.querySelectorAll('.block-card-container').forEach((card, i) => {
+        const isCurrent = i === index;
+        card.classList.toggle('ring-2', isCurrent);
+        card.classList.toggle('ring-brand', isCurrent);
+        card.classList.toggle('border-brand', isCurrent);
+        card.classList.toggle('shadow-glow', isCurrent);
+
+        const playBtn = card.querySelector('.block-play-btn');
+        if (playBtn) {
+          if (isCurrent) {
+            playBtn.className = 'block-play-btn flex items-center gap-1 text-[11px] text-white bg-brand px-2 py-0.5 rounded border border-brand transition-colors';
+            playBtn.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span><span>Playing</span>`;
+          } else {
+            playBtn.className = 'block-play-btn flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2 py-0.5 rounded border border-brand/20 transition-colors';
+            playBtn.innerHTML = `<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span>Listen</span>`;
+          }
+        }
+
+        if (isCurrent) {
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      });
+
+      updateAudioPlayerBarUI();
+
+      const block = blocks[index];
+      const textToSpeak = block.spoken_explanation || block.markdown || '';
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      utterance.rate = audioPlayer.rate;
+
+      utterance.onend = () => {
+        if (!audioPlayer.isPlaying) return;
+        if (index + 1 < blocks.length) {
+          playBlockAtIndex(index + 1, blocks, threadId);
+        } else {
+          stopBlocksAudio();
+        }
+      };
+
+      utterance.onerror = () => {
+        stopBlocksAudio();
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function renderBlocksAudioBar(blocks, threadId) {
+      if (!blocks || blocks.length === 0) return;
+      const bar = document.createElement('div');
+      bar.id = 'blocks-audio-player';
+      bar.className = 'animate-msg w-full bg-dark-surface/90 backdrop-blur-md border border-brand/40 shadow-glow rounded-2xl p-3 mb-6 text-xs sticky top-2 z-20';
+      bar.innerHTML = `
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-8 h-8 rounded-xl bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 text-brand">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M11 5L6 9H2v6h4l5 4V5z"/>
+              </svg>
+            </div>
+            <div class="min-w-0">
+              <div class="font-medium text-xs text-white truncate flex items-center gap-2">
+                <span>Audio Walkthrough</span>
+                <span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-brand/10 text-brand border border-brand/20">${blocks.length} Sections</span>
+              </div>
+              <div id="audio-status-text" class="text-[11px] text-txt-subtle truncate mt-0.5 font-mono">Ready · ${blocks.length} sections</div>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button id="audio-prev-btn" class="p-1.5 rounded-lg bg-dark-elevated border border-dark-border text-txt-subtle hover:text-white hover:border-brand-border transition-colors" title="Previous section">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            </button>
+            
+            <button id="audio-play-btn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-white font-medium text-xs transition-colors shadow-glow">
+              <svg id="audio-play-icon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              <span id="audio-play-label">Play All</span>
+            </button>
+            
+            <button id="audio-next-btn" class="p-1.5 rounded-lg bg-dark-elevated border border-dark-border text-txt-subtle hover:text-white hover:border-brand-border transition-colors" title="Next section">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+
+            <button id="audio-speed-btn" class="px-2 py-1 rounded-lg bg-dark-elevated border border-dark-border text-txt-subtle hover:text-white font-mono text-[10px] transition-colors" title="Playback speed">
+              ${audioPlayer.rate}x
+            </button>
+            
+            <button id="audio-stop-btn" class="p-1.5 rounded-lg bg-dark-elevated border border-dark-border text-txt-subtle hover:text-red-400 transition-colors" title="Stop">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6h12v12H6z"/></svg>
+            </button>
+          </div>
+        </div>
+      `;
+
+      bar.querySelector('#audio-play-btn')?.addEventListener('click', () => {
+        if (audioPlayer.isPlaying) {
+          stopBlocksAudio();
+        } else {
+          playBlockAtIndex(audioPlayer.currentIndex || 0, blocks, threadId);
+        }
+      });
+
+      bar.querySelector('#audio-prev-btn')?.addEventListener('click', () => {
+        const prevIdx = Math.max(0, audioPlayer.currentIndex - 1);
+        playBlockAtIndex(prevIdx, blocks, threadId);
+      });
+
+      bar.querySelector('#audio-next-btn')?.addEventListener('click', () => {
+        const nextIdx = Math.min(blocks.length - 1, audioPlayer.currentIndex + 1);
+        playBlockAtIndex(nextIdx, blocks, threadId);
+      });
+
+      bar.querySelector('#audio-speed-btn')?.addEventListener('click', (e) => {
+        const speeds = [1.0, 1.25, 1.5, 2.0];
+        const nextSpeed = speeds[(speeds.indexOf(audioPlayer.rate) + 1) % speeds.length];
+        audioPlayer.rate = nextSpeed;
+        e.currentTarget.textContent = `${nextSpeed}x`;
+        if (audioPlayer.isPlaying) {
+          playBlockAtIndex(audioPlayer.currentIndex, blocks, threadId);
+        }
+      });
+
+      bar.querySelector('#audio-stop-btn')?.addEventListener('click', () => {
+        stopBlocksAudio();
+      });
+
+      el.messagesContainer.appendChild(bar);
+      updateAudioPlayerBarUI();
+    }
+
+    function renderBlockNode(block, threadId, index = 0) {
       const wrapper = document.createElement('div');
       wrapper.className = 'animate-msg w-full flex items-start gap-3 mb-6';
       if (block.uuid) {
         wrapper.dataset.blockUuid = block.uuid;
       }
 
-      const seqId = block.sequence_id !== undefined ? block.sequence_id : 1;
+      const seqId = block.sequence_id !== undefined ? block.sequence_id : (index + 1);
       const markdownContent = block.markdown ? marked.parse(block.markdown) : '<p class="text-txt-subtle italic">No content</p>';
       const spokenText = block.spoken_explanation || 'No spoken explanation provided.';
 
@@ -775,9 +990,13 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
           </svg>
         </div>
-        <div class="flex-1 bg-dark-surface border border-dark-border rounded-xl px-4 py-3 max-w-[90%] shadow-card-glow">
+        <div class="block-card-container flex-1 bg-dark-surface border border-dark-border rounded-xl px-4 py-3 max-w-[90%] shadow-card-glow transition-all duration-300">
           <div class="flex items-center justify-between pb-2 mb-2 border-b border-dark-border/40">
             <span class="text-[11px] font-mono text-txt-subtle font-medium">Block ${seqId}</span>
+            <button type="button" class="block-play-btn flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2 py-0.5 rounded border border-brand/20 transition-colors" data-block-idx="${index}">
+              <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              <span>Listen</span>
+            </button>
           </div>
           <div class="prose-dark mb-3">
             ${markdownContent}
@@ -787,30 +1006,23 @@
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M11 5L6 9H2v6h4l5 4V5z"/>
               </svg>
-              <span>Read Aloud</span>
+              <span>Read Aloud Script</span>
               <svg class="w-3 h-3 ml-auto transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
               </svg>
             </summary>
             <div class="text-sm text-txt-muted mt-2 pt-2 border-t border-dark-border/40 flex flex-col gap-2">
-              <div class="leading-relaxed">${escapeHtml(spokenText)}</div>
-              <button type="button" class="play-audio-btn self-start flex items-center gap-1.5 text-xs text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2.5 py-1 rounded border border-brand/20 transition-colors mt-1">
-                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
-                <span>Play</span>
-              </button>
+              <div class="leading-relaxed text-xs">${escapeHtml(spokenText)}</div>
             </div>
           </details>
         </div>
       `;
 
-      const playBtn = wrapper.querySelector('.play-audio-btn');
+      const playBtn = wrapper.querySelector('.block-play-btn');
       if (playBtn && 'speechSynthesis' in window) {
         playBtn.addEventListener('click', () => {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(spokenText);
-          window.speechSynthesis.speak(utterance);
+          const allBlocks = state.blocks[threadId] || [block];
+          playBlockAtIndex(index, allBlocks, threadId);
         });
       }
 
@@ -915,7 +1127,57 @@
       }
     }
 
+    function renderCurrentSessionView(threadId = state.currentThreadId) {
+      if (!threadId) return;
+      el.messagesContainer.innerHTML = '';
+      clearToolCalls();
+
+      const messages = state.messages[threadId] || [];
+      const blocks = state.blocks[threadId] || [];
+      const hasBlocks = blocks.length > 0;
+      const cleanMessages = messages.filter(m => !m.content?.startsWith('Stop hook feedback:'));
+      const regularMessages = cleanMessages.filter(m => m.type !== 'tool_result');
+
+      if (regularMessages.length === 0 && !hasBlocks) {
+        el.emptyState.style.display = 'flex';
+        el.messagesContainer.appendChild(el.emptyState);
+        return;
+      }
+
+      el.emptyState.style.display = 'none';
+
+      if (state.currentMode === 'blocks') {
+        for (const msg of cleanMessages) {
+          if (msg.type === 'tool_result') {
+            renderToolCallNode(msg);
+          } else if (msg.type === 'human') {
+            renderMessageNode(msg);
+          }
+        }
+        if (hasBlocks) {
+          renderBlocksAudioBar(blocks, threadId);
+          blocks.forEach((block, idx) => {
+            renderBlockNode(block, threadId, idx);
+          });
+        } else {
+          const noBlocksEl = document.createElement('div');
+          noBlocksEl.className = 'animate-msg flex items-center justify-center p-8 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-2xl my-4';
+          noBlocksEl.textContent = 'No blocks in this session';
+          el.messagesContainer.appendChild(noBlocksEl);
+        }
+      } else {
+        for (const msg of cleanMessages) {
+          if (msg.type === 'tool_result') {
+            renderToolCallNode(msg);
+          } else {
+            renderMessageNode(msg);
+          }
+        }
+      }
+    }
+
     async function selectSession(threadId) {
+      stopBlocksAudio();
       setCurrentThread(threadId);
       renderSessions();
       state.contextUsage = null;
@@ -937,29 +1199,7 @@
             state.blocks[threadId] = blocks;
           }
 
-          clearToolCalls();
-          const regularMessages = state.messages[threadId].filter(m => m.type !== 'tool_result');
-          const hasMessages = regularMessages.length > 0;
-          const hasBlocks = state.blocks[threadId] && state.blocks[threadId].length > 0;
-
-          if (!hasMessages && !hasBlocks) {
-            el.emptyState.style.display = 'flex';
-            el.messagesContainer.appendChild(el.emptyState);
-          } else {
-            el.emptyState.style.display = 'none';
-            for (const msg of state.messages[threadId]) {
-              if (msg.type === 'tool_result') {
-                renderToolCallNode(msg);
-              } else {
-                renderMessageNode(msg);
-              }
-            }
-            if (hasBlocks) {
-              for (const block of state.blocks[threadId]) {
-                renderBlockNode(block, threadId);
-              }
-            }
-          }
+          renderCurrentSessionView(threadId);
         }
       } catch (e) {
         hideLoadingIndicator();
@@ -969,6 +1209,7 @@
     }
 
     function startNewChat() {
+      stopBlocksAudio();
       // Abort any in-progress stream
       if (state.abortController) {
         state.abortController.abort();
@@ -988,6 +1229,7 @@
     }
 
     async function deleteSession(threadId) {
+      stopBlocksAudio();
       try {
         await fetch(`/api/sessions/${threadId}`, { method: 'DELETE' });
       } catch (e) {}
@@ -1024,6 +1266,7 @@
       el.messageInput.style.height = 'auto';
       el.sendBtn.disabled = true;
       state.isStreaming = true;
+      setMode(state.enableBlocks ? 'blocks' : 'normal');
 
       // Hide empty screen
       el.emptyState.style.display = 'none';
@@ -1073,6 +1316,16 @@
               state.contextUsage = data.data;
               updateContextBar(data.data);
               continue;
+            }
+
+            if (state.currentMode === 'blocks') {
+              if (data.type === 'text_delta' || data.type === 'thinking_delta') {
+                continue;
+              }
+            } else {
+              if (data.type === 'content_block') {
+                continue;
+              }
             }
 
             hideLoadingIndicator();
@@ -1191,21 +1444,9 @@
               updateSessionTokensWidget();
             }
             if (data.response_mode === 'blocks') {
-              const badgeText = (!data.block_count || data.block_count === 0)
-                ? 'No blocks generated'
-                : `Blocks Mode · ${data.block_count} blocks`;
-              const modeBadge = document.createElement('div');
-              modeBadge.className = 'mt-1.5 inline-block text-[9px] px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20';
-              modeBadge.textContent = badgeText;
-              if (activeAiTextEl) {
-                activeAiTextEl.appendChild(modeBadge);
-              } else {
-                const badgeWrapper = document.createElement('div');
-                badgeWrapper.className = 'animate-msg flex items-center gap-2 mb-4 px-2';
-                badgeWrapper.appendChild(modeBadge);
-                el.messagesContainer.appendChild(badgeWrapper);
-                scrollToBottom();
-              }
+              renderCurrentSessionView(state.currentThreadId);
+            } else if (state.currentMode === 'blocks') {
+              showNotification('LLM did not return structured blocks; displayed in normal mode.', 'info');
             }
             if (isNewSession || threadChanged) {
               await loadSessionsFromDB();
@@ -1265,6 +1506,11 @@
 
     el.newChatBtn.addEventListener('click', startNewChat);
     el.clearAllBtn.addEventListener('click', clearAllSessions);
+    el.blocksToggleBtn?.addEventListener('click', () => {
+      state.enableBlocks = !state.enableBlocks;
+      localStorage.setItem('qa-enable-blocks', state.enableBlocks);
+      updateBlocksToggleUI();
+    });
     el.modeNormalBtn?.addEventListener('click', () => setMode('normal'));
     el.modeBlocksBtn?.addEventListener('click', () => setMode('blocks'));
     el.toolsPanelToggleBtn?.addEventListener('click', () => {
@@ -1379,6 +1625,7 @@
     // ============== Initialize ==============
     async function init() {
       checkHealth();
+      updateBlocksToggleUI();
       await loadWorkspace();
       await loadSessionsFromDB();
 

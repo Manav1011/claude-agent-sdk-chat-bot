@@ -131,6 +131,7 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
 
     messages = []
     enriched_blocks = []
+    pending_tool_calls = {}  # assistant_uuid -> {name, input}
 
     with open(jsonl_path) as f:
         for line in f:
@@ -146,19 +147,36 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
 
             if entry_type == "user":
                 msg = entry.get("message", {})
-                content = msg.get("content", "")
+                content = msg.get("content", [])
+                # Normalize string content to list format
                 if isinstance(content, str):
-                    messages.append({"type": "human", "content": content})
-                elif isinstance(content, list):
-                    texts = [c.get("text", "") for c in content if c.get("type") == "text"]
-                    if texts:
-                        messages.append({"type": "human", "content": "".join(texts)})
+                    content = [{"type": "text", "text": content}]
+                if isinstance(content, list):
+                    has_tool_result = any(c.get("type") == "tool_result" for c in content)
+                    if has_tool_result:
+                        for block in content:
+                            if block.get("type") == "tool_result":
+                                tool_result = block.get("content", "")
+                                source_uuid = entry.get("sourceToolAssistantUUID")
+                                if source_uuid and source_uuid in pending_tool_calls:
+                                    tool_call = pending_tool_calls.pop(source_uuid)
+                                    messages.append({
+                                        "type": "tool",
+                                        "name": tool_call["name"],
+                                        "input": tool_call["input"],
+                                        "content": tool_result,
+                                    })
+                    else:
+                        texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+                        if texts:
+                            messages.append({"type": "human", "content": "".join(texts)})
 
             elif entry_type == "assistant":
                 msg = entry.get("message", {})
                 content = msg.get("content", [])
                 if isinstance(content, list):
                     texts = []
+                    thinking_content = None
                     for block in content:
                         if block.get("type") == "text":
                             texts.append(block.get("text", ""))
@@ -173,10 +191,22 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
                                     enriched_blocks.extend([b.model_dump() for b in enriched])
                                 except Exception as e:
                                     print(f"[WARN] Failed to parse StructuredOutput blocks: {e}")
+                        elif block.get("type") == "tool_use":
+                            # Capture non-StructuredOutput tool calls
+                            tool_name = block.get("name")
+                            tool_input = block.get("input", {})
+                            assistant_uuid = entry.get("uuid")
+                            if assistant_uuid and tool_name:
+                                pending_tool_calls[assistant_uuid] = {
+                                    "name": tool_name,
+                                    "input": tool_input,
+                                }
                         elif block.get("type") == "thinking":
-                            pass  # skip thinking
+                            thinking_content = block.get("thinking", "")
                     if texts:
                         messages.append({"type": "ai", "content": "".join(texts)})
+                    if thinking_content:
+                        messages.append({"type": "thinking", "content": thinking_content})
 
     return messages, enriched_blocks
 
