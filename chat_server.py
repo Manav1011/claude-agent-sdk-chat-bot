@@ -656,13 +656,6 @@ async def chat(request: ChatRequest):
                                 "spoken_explanation": block.spoken_explanation,
                             })
 
-                        # THEN persist to DB — failure here does not lose blocks from the user
-                        try:
-                            await _persist_enriched_blocks(session_id, enriched)
-                        except Exception as e:
-                            print(f"[WARN] Failed to persist blocks: {e}")
-                            # Non-fatal: blocks were already delivered to the client
-
                         yield format_sse("done", {
                             "thread_id": session_id,
                             "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
