@@ -1,30 +1,37 @@
-"""Concurrency safety tests for DB and client caching."""
+"""Concurrency safety tests for DB and client caching.
+
+Note: DB layer has been removed. These tests now verify:
+1. get_db no longer exists (DB is removed)
+2. _db_lock no longer exists (DB is removed)
+3. _cache_lock still exists for SDK client caching
+4. _WORKSPACE_CLIENTS dict exists
+"""
 import asyncio
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from chat_server import get_db, _db_lock, _cache_lock
+import chat_server
 
 
-@pytest.mark.asyncio
-async def test_get_db_returns_same_connection():
-    """Two concurrent calls to get_db() should return the same connection."""
-    conn1 = await get_db()
-    conn2 = await get_db()
-    assert conn1 is conn2
+def test_get_db_removed():
+    """get_db should no longer exist since the DB layer was removed."""
+    assert not hasattr(chat_server, "get_db"), "get_db should be removed"
 
 
-@pytest.mark.asyncio
-async def test_db_lock_acquired():
-    """The _db_lock should exist and be an asyncio.Lock."""
-    assert isinstance(_db_lock, asyncio.Lock)
+def test_db_lock_removed():
+    """_db_lock should no longer exist since the DB layer was removed."""
+    assert not hasattr(chat_server, "_db_lock"), "_db_lock should be removed"
 
 
-@pytest.mark.asyncio
-async def test_cache_lock_acquired():
-    """The _cache_lock should exist and be an asyncio.Lock."""
-    assert isinstance(_cache_lock, asyncio.Lock)
+def test_cache_lock_still_exists():
+    """_cache_lock should still exist for SDK client caching."""
+    assert hasattr(chat_server, "_cache_lock")
+    assert isinstance(chat_server._cache_lock, asyncio.Lock)
+
+
+def test_workspace_clients_still_exists():
+    """_WORKSPACE_CLIENTS should still exist for SDK client caching."""
+    assert hasattr(chat_server, "_WORKSPACE_CLIENTS")
+    assert isinstance(chat_server._WORKSPACE_CLIENTS, dict)

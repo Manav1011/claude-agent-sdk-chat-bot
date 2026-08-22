@@ -15,8 +15,6 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Literal
 
-import aiosqlite
-
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk import ResultMessage, StreamEvent, list_sessions as sdk_list_sessions
 
@@ -46,15 +44,8 @@ _DEFAULT_WORKSPACE = "."
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    global _db_conn, _WORKSPACE_CLIENTS
+    global _WORKSPACE_CLIENTS
     _WORKSPACE_CLIENTS.clear()
-    if _db_conn:
-        try:
-            await _db_conn.close()
-            print("Database connection closed gracefully.")
-        except Exception as e:
-            print(f"Error closing DB: {e}")
-        _db_conn = None
 
 
 app = FastAPI(title="QA Automation Chatbot", lifespan=lifespan)
@@ -69,8 +60,6 @@ app.add_middleware(
 
 # Per-workspace SDK client cache (for context_usage queries between requests)
 _WORKSPACE_CLIENTS: dict[str, ClaudeSDKClient] = {}
-_db_conn = None
-_db_lock = asyncio.Lock()
 _cache_lock = asyncio.Lock()
 
 
@@ -205,81 +194,6 @@ def _build_options(workspace: str, session_id: str | None = None, resume: bool =
         include_partial_messages=True,
     )
     return opts
-
-
-# ============== Database (per-message enriched_blocks) ==============
-
-async def get_db():
-    """Get persistent SQLite connection for enriched_blocks."""
-    global _db_conn
-    if _db_conn is not None:
-        return _db_conn
-
-    async with _db_lock:
-        # Double-check after acquiring lock
-        if _db_conn is not None:
-            return _db_conn
-        try:
-            _db_conn = await aiosqlite.connect(
-                str(Path(__file__).parent / "chat_memory.db")
-            )
-            await _db_conn.execute("""
-                CREATE TABLE IF NOT EXISTS enriched_blocks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    thread_id TEXT NOT NULL,
-                    message_index INTEGER NOT NULL,
-                    blocks_json TEXT NOT NULL
-                )
-            """)
-            await _db_conn.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS
-                    uq_enriched_blocks_thread_message
-                ON enriched_blocks (thread_id, message_index)
-            """)
-            await _db_conn.commit()
-        except Exception as e:
-            print(f"[ERROR] Failed to initialize DB: {e}")
-            raise
-
-    return _db_conn
-
-
-async def _persist_enriched_blocks(
-    session_id: str, blocks: list[EnrichedContentBlock], message_index: int = 0
-) -> None:
-    """Persist blocks for a specific message in a session.
-
-    message_index=0 is the first message in a thread, 1 is the second, etc.
-    """
-    conn = await get_db()
-    blocks_json = json.dumps([b.model_dump() for b in blocks])
-    await conn.execute(
-        """INSERT OR REPLACE INTO enriched_blocks
-           (thread_id, message_index, blocks_json)
-           VALUES (?, ?, ?)""",
-        (session_id, message_index, blocks_json),
-    )
-    await conn.commit()
-
-
-async def _get_enriched_blocks(session_id: str) -> list[EnrichedContentBlock] | None:
-    """Get the latest message's blocks for a session (message_index=0)."""
-    conn = await get_db()
-    async with conn.cursor() as cursor:
-        await cursor.execute(
-            """SELECT blocks_json FROM enriched_blocks
-               WHERE thread_id = ?
-               ORDER BY message_index DESC LIMIT 1""",
-            (session_id,),
-        )
-        row = await cursor.fetchone()
-        if row and row[0]:
-            try:
-                blocks_data = json.loads(row[0])
-                return [EnrichedContentBlock(**b) for b in blocks_data]
-            except json.JSONDecodeError:
-                return None
-    return None
 
 
 # ============== SSE Helper ==============
@@ -421,27 +335,19 @@ async def get_session_messages(session_id: str, workspace: str | None = None):
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
-    """Delete enriched_blocks entry (SDK JSONL deletion is not supported)."""
-    conn = await get_db()
-    try:
-        async with conn.cursor() as cursor:
-            await cursor.execute("DELETE FROM enriched_blocks WHERE thread_id = ?", (session_id,))
-        await conn.commit()
-    except Exception as e:
-        print(f"Error deleting session {session_id}: {e}")
+    """Delete session data.
+
+    Note: SDK JSONL deletion is not supported. This endpoint is a no-op for SDK data.
+    """
     return {"status": "deleted", "session_id": session_id}
 
 
 @app.delete("/api/sessions")
 async def delete_all_sessions():
-    """Delete all enriched_blocks (SDK JSONL deletion not supported)."""
-    conn = await get_db()
-    try:
-        async with conn.cursor() as cursor:
-            await cursor.execute("DELETE FROM enriched_blocks")
-        await conn.commit()
-    except Exception as e:
-        print(f"Error deleting all sessions: {e}")
+    """Delete all session data.
+
+    Note: SDK JSONL deletion is not supported. This endpoint is a no-op for SDK data.
+    """
     return {"status": "deleted_all"}
 
 
