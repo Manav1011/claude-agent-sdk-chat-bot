@@ -17,6 +17,7 @@ from typing import Literal
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk import ResultMessage, StreamEvent, list_sessions as sdk_list_sessions
+from claude_agent_sdk.types import SettingSource
 
 from schemas import ContentBlock, AgentResponse, EnrichedContentBlock
 
@@ -38,11 +39,43 @@ _INDUSTRIAL_HTML = _INDUSTRIAL_HTML_PATH.read_text() if _INDUSTRIAL_HTML_PATH.ex
 
 _DEFAULT_WORKSPACE = "."
 
+# ============== SQLite (projects DB) ==============
+import sqlite3
+
+_DB_PATH = Path(__file__).parent / "projects.db"
+
+def _get_db():
+    conn = sqlite3.connect(_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def _init_db():
+    with _get_db() as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        db.commit()
+
+def _resolve_workspace(project_id: int | None) -> str:
+    """Resolve project_id to workspace path. Falls back to default if not found."""
+    if project_id is not None:
+        with _get_db() as db:
+            row = db.execute("SELECT path FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if row:
+                return row["path"]
+    return _DEFAULT_WORKSPACE
+
 
 # ============== Lifespan ==============
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _init_db()
     yield
     global _WORKSPACE_CLIENTS
     _WORKSPACE_CLIENTS.clear()
@@ -157,6 +190,17 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
                         for block in content:
                             if block.get("type") == "tool_result":
                                 tool_result = block.get("content", "")
+                                if isinstance(tool_result, list):
+                                    text_parts = []
+                                    for item in tool_result:
+                                        if isinstance(item, dict):
+                                            if item.get("type") == "text":
+                                                text_parts.append(item.get("text", ""))
+                                            elif item.get("type") == "image":
+                                                text_parts.append("[Image Output]")
+                                        elif isinstance(item, str):
+                                            text_parts.append(item)
+                                    tool_result = "\n".join(text_parts) if text_parts else str(tool_result)
                                 source_uuid = entry.get("sourceToolAssistantUUID")
                                 if source_uuid and source_uuid in pending_tool_calls:
                                     tool_call = pending_tool_calls.pop(source_uuid)
@@ -168,8 +212,9 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
                                     })
                     else:
                         texts = [c.get("text", "") for c in content if c.get("type") == "text"]
-                        if texts:
-                            messages.append({"type": "human", "content": "".join(texts)})
+                        human_text = "".join(texts)
+                        if human_text and not human_text.startswith("[structured-output-enforce]") and not human_text.startswith("Stop hook feedback:"):
+                            messages.append({"type": "human", "content": human_text})
 
             elif entry_type == "assistant":
                 msg = entry.get("message", {})
@@ -188,7 +233,11 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
                                     from schemas import ContentBlock
                                     content_blocks = [ContentBlock(**b) for b in raw_blocks]
                                     enriched = _enrich_blocks(content_blocks)
-                                    enriched_blocks.extend([b.model_dump() for b in enriched])
+                                    parent_uuid = entry.get("uuid")
+                                    for b in enriched:
+                                        block_dict = b.model_dump()
+                                        block_dict["parentUuid"] = parent_uuid
+                                        enriched_blocks.append(block_dict)
                                 except Exception as e:
                                     print(f"[WARN] Failed to parse StructuredOutput blocks: {e}")
                         elif block.get("type") == "tool_use":
@@ -217,7 +266,15 @@ BLOCKS_MODE_SYSTEM_PROMPT = """When responding in blocks mode using the Structur
 - The StructuredOutput tool call IS your complete response — nothing else should follow
 - Do not add commentary, summaries, or follow-up text after calling the tool"""
 
-def _build_options(workspace: str, session_id: str | None = None, resume: bool = False, system_prompt: str | None = None) -> ClaudeAgentOptions:
+def _build_options(
+    workspace: str,
+    session_id: str | None = None,
+    resume: bool = False,
+    system_prompt: str | None = None,
+    setting_sources: list[SettingSource] | None = None,
+    skills: list[str] | Literal["all"] | None = None,
+    permission_mode: Literal["plan", "bypassPermissions"] | None = None,
+) -> ClaudeAgentOptions:
     opts = ClaudeAgentOptions(
         model="Minimax-M2.7",
         system_prompt=system_prompt,
@@ -229,6 +286,9 @@ def _build_options(workspace: str, session_id: str | None = None, resume: bool =
         resume=session_id if resume else None,
         session_id=session_id if not resume else None,
         include_partial_messages=True,
+        setting_sources=setting_sources,
+        skills=skills,
+        permission_mode=permission_mode,
     )
     return opts
 
@@ -244,8 +304,14 @@ def format_sse(event: str, data: dict) -> str:
 class ChatRequest(BaseModel):
     message: str
     thread_id: str | None = None
-    workspace: str | None = None
+    project_id: int | None = None
     response_mode: Literal["normal", "blocks"] = "normal"
+    setting_sources: list[SettingSource] | None = None
+    """Control which filesystem settings to load. null = SDK defaults (all sources)."""
+    skills: list[str] | Literal["all"] | None = None
+    """Skills to enable. null = SDK defaults, [] = no skills, 'all' = all discovered skills."""
+    permission_mode: Literal["plan", "bypassPermissions"] | None = None
+    """Permission mode. 'plan' = read-only, 'bypassPermissions' = full access, null = SDK defaults."""
 
 
 class WorkspaceSelectRequest(BaseModel):
@@ -329,12 +395,9 @@ async def debug_usage():
 
 
 @app.get("/api/sessions", response_model=SessionsListResponse)
-async def list_sessions(workspace: str | None = None):
+async def list_sessions(project_id: int | None = None):
     """List sessions using SDK — no DB needed."""
-    if workspace:
-        ws = str(Path(workspace).expanduser().resolve())
-    else:
-        ws = _DEFAULT_WORKSPACE
+    ws = _resolve_workspace(project_id)
 
     raw = sdk_list_sessions(directory=ws, limit=50)
     sessions = [
@@ -349,17 +412,14 @@ async def list_sessions(workspace: str | None = None):
 
 
 @app.get("/api/sessions/{session_id}/messages", response_model=MessagesResponse)
-async def get_session_messages(session_id: str, workspace: str | None = None):
+async def get_session_messages(session_id: str, project_id: int | None = None):
     # Validate — SDK session_id must be UUID; if invalid, return empty history
     try:
         uuid.UUID(session_id)
     except ValueError:
         return MessagesResponse(session_id=session_id, messages=[], enriched_blocks=None)
     """Read conversation history from SDK JSONL file."""
-    if workspace:
-        ws = str(Path(workspace).expanduser().resolve())
-    else:
-        ws = _DEFAULT_WORKSPACE
+    ws = _resolve_workspace(project_id)
 
     messages, enriched_blocks = _read_sdk_history_and_blocks(ws, session_id)
 
@@ -386,6 +446,79 @@ async def delete_all_sessions():
     Note: SDK JSONL deletion is not supported. This endpoint is a no-op for SDK data.
     """
     return {"status": "deleted_all"}
+
+
+# ============== Projects ==============
+
+from schemas import Project, ProjectCreate, ProjectsListResponse, ProjectSessionsResponse
+
+
+@app.get("/api/projects", response_model=ProjectsListResponse)
+async def list_projects():
+    """List all tracked projects."""
+    with _get_db() as db:
+        rows = db.execute("SELECT id, name, path, created_at FROM projects ORDER BY created_at DESC").fetchall()
+    projects = [
+        Project(id=r["id"], name=r["name"], path=r["path"], created_at=r["created_at"])
+        for r in rows
+    ]
+    return ProjectsListResponse(projects=projects)
+
+
+@app.post("/api/projects", response_model=Project)
+async def add_project(request: ProjectCreate):
+    """Add a project by path. Auto-discovers existing sessions."""
+    path = Path(request.path).expanduser().resolve()
+    if not path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Path does not exist or is not a directory: {path}")
+
+    with _get_db() as db:
+        existing = db.execute("SELECT id FROM projects WHERE path = ?", (str(path),)).fetchone()
+        if existing:
+            raise HTTPException(status_code=400, detail="Project with this path already exists")
+
+        cursor = db.execute(
+            "INSERT INTO projects (name, path) VALUES (?, ?)",
+            (request.name, str(path))
+        )
+        db.commit()
+        project_id = cursor.lastrowid
+        row = db.execute("SELECT id, name, path, created_at FROM projects WHERE id = ?", (project_id,)).fetchone()
+
+    return Project(id=row["id"], name=row["name"], path=row["path"], created_at=row["created_at"])
+
+
+@app.get("/api/projects/{project_id}/sessions", response_model=ProjectSessionsResponse)
+async def get_project_sessions(project_id: int):
+    """Get sessions for a project by reading SDK JSONL sessions list."""
+    with _get_db() as db:
+        row = db.execute("SELECT path FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_path = row["path"]
+    raw = sdk_list_sessions(directory=project_path, limit=50)
+    sessions = [
+        SessionResponse(
+            thread_id=s.session_id,
+            first_message=s.summary or s.first_prompt or s.session_id,
+            created_at=str(s.created_at) if s.created_at else None,
+        )
+        for s in raw
+    ]
+    return ProjectSessionsResponse(sessions=sessions)
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: int):
+    """Remove a project from tracking. Does not delete files or sessions."""
+    with _get_db() as db:
+        row = db.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        db.commit()
+    return {"status": "deleted", "project_id": project_id}
 
 
 @app.post("/api/workspaces/select", response_model=WorkspaceResponse)
@@ -419,8 +552,10 @@ async def chat(request: ChatRequest):
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Resolve workspace
-    workspace = request.workspace or _DEFAULT_WORKSPACE
+    print(f"[CHAT_REQUEST] {request.model_dump_json(exclude={'message'})}")
+
+    # Resolve workspace from project_id
+    workspace = _resolve_workspace(request.project_id)
     workspace = str(Path(workspace).expanduser().resolve())
 
     # Resolve session_id — must be UUID for SDK; generate new if invalid
@@ -446,6 +581,9 @@ async def chat(request: ChatRequest):
             session_id=session_id,
             resume=session_exists,
             system_prompt=BLOCKS_MODE_SYSTEM_PROMPT if blocks_mode else None,
+            setting_sources=request.setting_sources,
+            skills=request.skills,
+            permission_mode=request.permission_mode,
         )
 
         if blocks_mode:
@@ -459,15 +597,22 @@ async def chat(request: ChatRequest):
         blocks_emitted = False  # guard: suppress text_delta after structured output arrives
 
         try:
-            # Reuse cached client for this session to enable get_context_usage()
+            # Reuse cached client only when no custom config is passed — custom opts
+            # (skills, setting_sources, permission_mode) must be fresh per request
+            has_custom_config = any([
+                request.setting_sources is not None,
+                request.skills is not None,
+                request.permission_mode is not None,
+            ])
             cache_key = f"{workspace}:{session_id}"
             async with _cache_lock:
-                if cache_key in _WORKSPACE_CLIENTS:
+                if cache_key in _WORKSPACE_CLIENTS and not has_custom_config:
                     client = _WORKSPACE_CLIENTS[cache_key]
                 else:
                     client = ClaudeSDKClient(options=opts)
                     await client.connect()
-                    _WORKSPACE_CLIENTS[cache_key] = client
+                    if not has_custom_config:
+                        _WORKSPACE_CLIENTS[cache_key] = client
 
             await client.query(prompt=request.message)
 
@@ -545,7 +690,7 @@ async def chat(request: ChatRequest):
 
                 # --- ResultMessage ---
                 elif isinstance(msg, ResultMessage):
-                    print(f"[USAGE] input={turn_usage['input_tokens']} output={turn_usage['output_tokens']} total={turn_usage['total_tokens']} model_usage={msg.model_usage} usage={msg.usage} cost=${msg.total_cost_usd}")
+                    # print(f"[USAGE] input={turn_usage['input_tokens']} output={turn_usage['output_tokens']} total={turn_usage['total_tokens']} model_usage={msg.model_usage} usage={msg.usage} cost=${msg.total_cost_usd}")
                     # Grab usage from ResultMessage — prefer model_usage (camelCase keys)
                     if msg.model_usage and turn_usage["total_tokens"] == 0:
                         for model, u in msg.model_usage.items():

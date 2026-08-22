@@ -71,15 +71,24 @@
                   radial-gradient(circle at 100% 100%, rgba(20, 21, 26, 0.8) 0%, transparent 50%);
     }
 
-    /* Custom Scrollbar - Hidden but scrollable */
+    /* Custom Matching Scrollbar */
     ::-webkit-scrollbar {
-      display: none;
-      width: 0px;
-      height: 0px;
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(241, 105, 19, 0.5);
     }
     * {
-      -ms-overflow-style: none;  /* IE and Edge */
-      scrollbar-width: none;  /* Firefox */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
     }
 
     /* Markdown styling inside assistant messages */
@@ -87,6 +96,9 @@
       color: #e5e7eb;
       font-size: 0.925rem;
       line-height: 1.6;
+      word-break: break-word;
+      overflow-wrap: break-word;
+      max-width: 100%;
     }
     .prose-dark p {
       margin-bottom: 0.75rem;
@@ -99,6 +111,7 @@
       font-weight: 600;
       margin-top: 1rem;
       margin-bottom: 0.5rem;
+      word-break: break-word;
     }
     .prose-dark ul {
       list-style-type: disc;
@@ -112,6 +125,7 @@
     }
     .prose-dark li {
       margin-bottom: 0.25rem;
+      word-break: break-word;
     }
     .prose-dark code:not(pre code) {
       background: #2a2d37;
@@ -120,6 +134,7 @@
       border-radius: 0.25rem;
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.825em;
+      word-break: break-all;
     }
     .prose-dark pre {
       background: #14151a !important;
@@ -127,7 +142,8 @@
       border-radius: 0.5rem;
       margin: 0.75rem 0;
       position: relative;
-      overflow: hidden;
+      overflow-x: auto;
+      max-width: 100%;
     }
     .prose-dark pre code {
       font-family: 'JetBrains Mono', monospace;
@@ -135,12 +151,16 @@
       padding: 1rem !important;
       display: block;
       overflow-x: auto;
+      white-space: pre;
     }
     .prose-dark table {
       width: 100%;
       border-collapse: collapse;
       margin: 0.75rem 0;
       font-size: 0.85rem;
+      display: block;
+      overflow-x: auto;
+      max-width: 100%;
     }
     .prose-dark th {
       background-color: #1c1e26;
@@ -187,139 +207,125 @@
 </head>
 <body class="bg-dark-bg text-txt-main h-screen flex flex-col antialiased selection:bg-brand selection:text-white">
   
-  <div class="flex h-full w-full bg-ambient relative">
+  <div class="flex h-full w-full bg-ambient relative overflow-hidden">
     
+    <!-- Mobile Sidebar Backdrop -->
+    <div id="sidebar-backdrop" class="fixed inset-0 bg-black/60 z-30 hidden lg:hidden backdrop-blur-sm transition-opacity"></div>
+
     <!-- Sidebar -->
-    <aside id="sidebar" class="w-64 bg-dark-surface/90 backdrop-blur-md border-r border-dark-border flex flex-col shrink-0 transition-all duration-300 z-30">
+    <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-72 bg-dark-surface/95 backdrop-blur-md border-r border-dark-border flex flex-col shrink-0 transition-transform duration-300 -translate-x-full lg:translate-x-0 lg:static">
       
-      <!-- App Brand -->
-      <div class="p-4 border-b border-dark-border flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-brand to-amber-600 flex items-center justify-center shadow-glow text-dark-bg font-bold">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <!-- App Brand Row -->
+      <div class="p-3 border-b border-dark-border flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-brand to-amber-600 flex items-center justify-center shadow-glow text-dark-bg font-bold">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
             </svg>
           </div>
           <div>
-            <h1 class="font-semibold text-sm tracking-wide text-white">QA Automation</h1>
-            <p class="text-[10px] text-txt-subtle uppercase tracking-wider font-mono">Agent Studio</p>
+            <span class="font-semibold text-xs text-white">Explainer Bot</span>
+            <span class="text-[9px] text-txt-subtle block font-mono">Workspace Studio</span>
           </div>
         </div>
       </div>
 
-      <!-- Workspace Selector -->
-      <div class="px-3 py-2 border-b border-dark-border">
-        <div class="flex items-center gap-2 text-[10px] text-txt-subtle uppercase tracking-wider mb-1.5">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <!-- Projects Section Header with Expand/Collapse & Add Project -->
+      <div class="px-3 pt-3 pb-1.5 flex items-center justify-between text-[11px] font-semibold text-txt-subtle uppercase tracking-wider">
+        <div class="flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
           </svg>
-          <span>Workspace</span>
+          <span>Projects</span>
         </div>
-        <div class="flex gap-1.5">
-          <input id="workspace-input" type="text" 
-                 placeholder="Enter workspace path..."
-                 class="flex-1 bg-dark-elevated border border-dark-border rounded-lg px-2.5 py-1.5 text-[11px] text-txt-main font-mono placeholder:text-txt-subtle focus:outline-none focus:border-brand-border" />
-          <button id="workspace-set-btn"
-                  class="bg-brand hover:bg-brand-hover text-white text-[10px] font-medium px-2.5 py-1.5 rounded-lg transition-colors">
-            Set
+        <div class="flex items-center gap-1">
+          <button id="expand-all-btn" title="Expand all projects" class="p-1 rounded hover:bg-dark-elevated hover:text-white text-txt-subtle transition-colors flex items-center justify-center" aria-label="Expand all">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <button id="collapse-all-btn" title="Collapse all projects" class="p-1 rounded hover:bg-dark-elevated hover:text-white text-txt-subtle transition-colors flex items-center justify-center" aria-label="Collapse all">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+            </svg>
+          </button>
+          <button id="add-project-btn" title="Add project by path" class="px-2 py-0.5 rounded-md bg-dark-elevated hover:bg-dark-border text-txt-subtle hover:text-white transition-colors flex items-center gap-1 text-[10px] normal-case font-medium border border-dark-border ml-0.5">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            <span>Add</span>
           </button>
         </div>
-        <div id="workspace-status" class="mt-1 text-[10px] text-txt-subtle font-mono truncate"></div>
       </div>
 
-      <!-- Action Button -->
-      <div class="p-3">
-        <button id="new-chat-btn" class="w-full bg-brand hover:bg-brand-hover text-white font-medium text-xs py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all duration-200 shadow-glow active:scale-[0.98]">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-          </svg>
-          <span>New Conversation</span>
-        </button>
-      </div>
-
-      <!-- Sessions List Title -->
-      <div class="px-4 py-2 flex items-center justify-between text-[11px] font-semibold text-txt-subtle uppercase tracking-wider">
-        <span>Recent Chats</span>
-        <button id="clear-all-sessions-btn" title="Clear all local history" class="hover:text-red-400 transition-colors">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-          </svg>
-        </button>
-      </div>
-
-      <!-- Session List Container -->
-      <div id="session-list" class="flex-1 overflow-y-auto px-2 space-y-1">
-        <div id="sessions-container"></div>
-      </div>
-
-      <!-- Sidebar Footer Status & Token Usage -->
-      <div class="p-3 border-t border-dark-border bg-dark-bg/40 text-[11px] space-y-2">
-
-        <div class="flex items-center justify-between">
-          <span class="text-txt-subtle flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            System Ready
-          </span>
-          <span id="connection-status" class="font-mono text-[10px] px-2 py-0.5 rounded bg-dark-elevated text-txt-muted border border-dark-border">Checking...</span>
+      <!-- Add Project Inline Form (Hidden by default) -->
+      <div id="add-project-form" class="mx-3 my-2 p-2.5 bg-dark-elevated/90 border border-brand/40 rounded-xl space-y-2 text-xs hidden animate-msg">
+        <div class="font-medium text-[11px] text-white flex items-center justify-between">
+          <span>Add Project</span>
+          <button id="cancel-add-project-btn" class="text-txt-subtle hover:text-white text-sm leading-none">&times;</button>
         </div>
+        <input id="new-project-path-input" type="text" placeholder="/path/to/project" class="w-full bg-dark-bg border border-dark-border rounded-lg px-2.5 py-1.5 text-[11px] text-white font-mono placeholder:text-txt-subtle focus:outline-none focus:border-brand-border" />
+        <input id="new-project-name-input" type="text" placeholder="Project name (optional)" class="w-full bg-dark-bg border border-dark-border rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder:text-txt-subtle focus:outline-none focus:border-brand-border" />
+        <button id="submit-add-project-btn" class="w-full bg-brand hover:bg-brand-hover text-white text-[11px] font-medium py-1.5 rounded-lg transition-colors shadow-glow">Track Project</button>
       </div>
+
+      <!-- Projects & Sessions Tree Container -->
+      <div id="projects-container" class="flex-1 overflow-y-auto px-2 py-1 space-y-1.5"></div>
 
     </aside>
 
     <!-- Main Workspace -->
-    <main class="flex-1 flex flex-col min-w-0 h-full relative">
+    <main class="flex-1 flex flex-col min-w-0 h-full relative overflow-hidden">
       
-      <!-- Top Mobile Navigation -->
-      <div class="lg:hidden flex items-center justify-between p-3 border-b border-dark-border bg-dark-surface/90 backdrop-blur-md">
-        <div class="flex items-center gap-3">
-          <button id="menu-toggle" class="p-2 text-txt-muted hover:text-white rounded-lg bg-dark-elevated border border-dark-border">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <!-- Unified Header Bar -->
+      <header class="h-12 px-3 sm:px-5 border-b border-dark-border/60 bg-dark-surface/40 backdrop-blur-md flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2.5">
+          <button id="menu-toggle" class="lg:hidden p-1.5 text-txt-muted hover:text-white rounded-lg bg-dark-elevated border border-dark-border" title="Toggle menu">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
           </button>
-          <span class="font-medium text-sm text-white">QA Automation Agent</span>
+          <span class="font-medium text-xs sm:text-sm text-white tracking-wide">QA Automation</span>
         </div>
-      </div>
 
-      <!-- Header Bar -->
-      <div class="flex items-center justify-between px-4 lg:px-6 pt-3 shrink-0">
-        <button id="tools-panel-toggle-btn" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs bg-dark-elevated hover:bg-dark-surface border border-dark-border text-txt-muted hover:text-white transition-colors">
-          <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-          </svg>
-          <span>Tools</span>
-          <span id="tools-badge-btn" class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">0</span>
-        </button>
-        <div class="flex bg-dark-elevated rounded-lg p-0.5 border border-dark-border">
-          <button id="mode-normal" class="px-3 py-1 rounded-md text-xs transition-colors bg-brand text-white font-medium shadow-sm">Normal</button>
-          <button id="mode-blocks" class="px-3 py-1 rounded-md text-xs transition-colors text-txt-subtle hover:text-white">Blocks</button>
+        <div class="flex items-center gap-2">
+          <div class="flex bg-dark-elevated rounded-lg p-0.5 border border-dark-border text-xs">
+            <button id="mode-normal" class="px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md text-[11px] sm:text-xs transition-colors bg-brand text-white font-medium shadow-sm">Normal</button>
+            <button id="mode-blocks" class="px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md text-[11px] sm:text-xs transition-colors text-txt-subtle hover:text-white">Blocks</button>
+          </div>
+          <button id="settings-btn" title="Settings" class="p-1.5 rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border text-txt-muted hover:text-white transition-colors flex items-center justify-center">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </button>
         </div>
-      </div>
+      </header>
 
       <!-- Chat Messages Scroll Container -->
-      <div id="messages-container" class="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6 max-w-4xl w-full mx-auto">
+      <div id="messages-container" class="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5 space-y-4 w-full min-w-0">
         
         <!-- Empty State -->
-        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center my-auto py-12">
-          <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-brand/20 to-amber-500/10 border border-brand-border flex items-center justify-center mb-5 shadow-glow">
-            <svg class="w-8 h-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center my-auto py-10 w-full max-w-3xl lg:max-w-4xl mx-auto">
+          <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-brand/20 to-amber-500/10 border border-brand-border flex items-center justify-center mb-4 shadow-glow">
+            <svg class="w-6 h-6 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
             </svg>
           </div>
-          <h2 class="text-xl font-semibold text-white mb-2">How can I assist your testing today?</h2>
-          <p class="text-txt-muted text-sm max-w-md mb-8 leading-relaxed">
-            I can inspect your web workflows, generate automation scripts, execute multi-step recordings, or answer skill queries.
+          <h2 class="text-base sm:text-lg font-semibold text-white mb-1.5">What would you like to explore?</h2>
+          <p class="text-txt-muted text-xs sm:text-sm max-w-md mb-6 leading-relaxed">
+            Ask questions, run automation workflows, or explore interactive structured explanation blocks.
           </p>
 
           <!-- Prompt Cards -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
-            <button class="prompt-chip text-left p-3.5 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand-border transition-all duration-200 group">
-              <div class="font-medium text-xs text-white group-hover:text-brand mb-1">What skills do you have?</div>
-              <div class="text-[11px] text-txt-subtle truncate">List all installed automation capabilities</div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-md">
+            <button class="prompt-chip text-left p-3 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand-border transition-all duration-200 group">
+              <div class="font-medium text-xs text-white group-hover:text-brand mb-0.5">What skills do you have?</div>
+              <div class="text-[11px] text-txt-subtle truncate">List all installed capabilities</div>
             </button>
-            <button class="prompt-chip text-left p-3.5 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand-border transition-all duration-200 group">
-              <div class="font-medium text-xs text-white group-hover:text-brand mb-1">Automate login flow</div>
-              <div class="text-[11px] text-txt-subtle truncate">Create auto-recording web interaction test</div>
+            <button class="prompt-chip text-left p-3 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand-border transition-all duration-200 group">
+              <div class="font-medium text-xs text-white group-hover:text-brand mb-0.5">Explain Machine Learning</div>
+              <div class="text-[11px] text-txt-subtle truncate">Structured breakdown with audio walkthrough</div>
             </button>
           </div>
         </div>
@@ -327,75 +333,45 @@
       </div>
 
       <!-- Floating Input Container -->
-      <div class="p-4 lg:p-6 w-full max-w-4xl mx-auto shrink-0">
-        <div class="relative rounded-2xl bg-dark-surface/90 backdrop-blur-xl border border-dark-border focus-within:border-brand-border focus-within:ring-1 focus-within:ring-brand/40 shadow-2xl transition-all duration-200 p-3">
+      <div class="px-3 pb-3 pt-1 sm:px-4 sm:pb-4 w-full max-w-2xl lg:max-w-3xl mx-auto shrink-0 min-w-0">
+        <div class="relative rounded-xl bg-dark-surface/95 backdrop-blur-xl border border-dark-border focus-within:border-brand/60 shadow-lg transition-all duration-150 px-3 py-2">
           
           <textarea
             id="message-input"
             rows="1"
-            placeholder="Ask QA Agent to automate a workflow..."
-            class="w-full bg-transparent px-2 pt-1 pb-2 text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-48 font-sans leading-relaxed block overflow-y-auto"
+            placeholder="Type a message or prompt..."
+            class="w-full bg-transparent px-0.5 py-0.5 text-xs sm:text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-32 font-sans leading-relaxed block overflow-y-auto min-h-[22px]"
           ></textarea>
 
-          <div class="flex items-center justify-between border-t border-dark-border/40 pt-2.5 mt-1 text-[11px] text-txt-subtle">
-            <div class="flex items-center gap-2 font-mono">
-              <span class="px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">Shift + Enter</span> for new line
-              <button id="blocks-toggle-btn" type="button" class="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-sans font-medium border transition-colors cursor-pointer select-none">
-                <span id="blocks-toggle-dot" class="w-1.5 h-1.5 rounded-full"></span>
-                <span id="blocks-toggle-text">Blocks: OFF</span>
+          <div class="flex items-center justify-between pt-1.5 mt-0.5 text-[11px] text-txt-subtle">
+            <span class="text-[10px] text-txt-subtle font-mono">Shift + Enter for new line</span>
+
+            <div class="flex items-center gap-2">
+              <!-- Context usage progress bar -->
+              <div id="context-usage-bar" class="hidden items-center gap-1.5 cursor-pointer font-mono text-[11px] select-none text-brand hover:brightness-110 transition-all" onclick="showContextModal()" title="View context breakdown">
+                <span class="text-brand font-bold">[</span>
+                <span id="context-usage-blocks" class="tracking-tight inline-flex leading-none"></span>
+                <span class="text-brand font-bold">]</span>
+                <span id="context-usage-label" class="text-[10px] font-mono text-brand font-medium">0%</span>
+              </div>
+
+              <button
+                id="send-btn"
+                disabled
+                title="Send message"
+                class="bg-brand hover:bg-brand-hover text-white p-1.5 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-25 disabled:hover:bg-brand shadow-sm active:scale-95 shrink-0"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                </svg>
               </button>
             </div>
-
-            <!-- Context usage progress bar -->
-            <div id="context-usage-bar" class="hidden items-center gap-1.5 cursor-pointer font-mono text-[11px] select-none text-brand hover:brightness-110 transition-all" onclick="showContextModal()" title="View context breakdown">
-              <span class="text-brand font-bold">[</span>
-              <span id="context-usage-blocks" class="tracking-tight inline-flex leading-none"></span>
-              <span class="text-brand font-bold">]</span>
-              <span id="context-usage-label" class="text-[10px] font-mono text-brand font-medium">0%</span>
-            </div>
-
-            <button
-              id="send-btn"
-              disabled
-              class="bg-brand hover:bg-brand-hover text-white font-medium text-xs px-4 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-200 disabled:opacity-40 disabled:hover:bg-brand shadow-glow active:scale-95"
-            >
-              <span>Send</span>
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
-              </svg>
-            </button>
           </div>
 
         </div>
       </div>
 
     </main>
-
-    <!-- Right Side Tools Panel -->
-    <aside id="tools-panel" class="w-80 bg-dark-surface/95 backdrop-blur-md border-l border-dark-border flex flex-col shrink-0 transition-all duration-300 z-20 hidden">
-      <div class="p-3.5 border-b border-dark-border flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <div class="w-6 h-6 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-            </svg>
-          </div>
-          <span class="font-medium text-xs text-white">Tool Call History</span>
-          <span id="tools-count-badge" class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">0</span>
-        </div>
-        <button id="tools-panel-close-btn" class="p-1 text-txt-subtle hover:text-white rounded-lg transition-colors" title="Close Panel">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-          </svg>
-        </button>
-      </div>
-
-      <div id="tools-list" class="flex-1 overflow-y-auto p-3 space-y-2.5">
-        <div id="tools-empty-state" class="px-3 py-6 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-xl my-2">
-          No tool calls
-        </div>
-      </div>
-    </aside>
 
   </div>
 
@@ -412,19 +388,36 @@
       breaks: true
     });
 
+    // Helper to get initial setting_sources
+    function getInitialSettingSources() {
+      const stored = localStorage.getItem('qa-setting-sources');
+      if (stored === 'user') return ['user'];
+      if (stored === 'local') return ['local'];
+      if (stored && stored.startsWith('[')) {
+        try { return JSON.parse(stored); } catch(e) { return null; }
+      }
+      return null;
+    }
+
     // ============== State Management ==============
     const state = {
       currentThreadId: localStorage.getItem('qa-chat-current-thread') || null,
-      sessions: [],
+      activeProjectId: localStorage.getItem('qa-active-project-id') ? parseInt(localStorage.getItem('qa-active-project-id'), 10) : null,
+      projects: [],
+      projectSessions: {},
+      expandedProjects: new Set(),
+      loadingProjects: new Set(),
       messages: {},
+      blocks: {},
       currentMode: 'normal',
       enableBlocks: localStorage.getItem('qa-enable-blocks') === 'true',
-      blocks: {},
+      settingSources: getInitialSettingSources(),
+      skillsMode: localStorage.getItem('qa-skills-mode') || 'default',
+      skillsList: JSON.parse(localStorage.getItem('qa-skills-list') || '[]'),
+      permissionMode: localStorage.getItem('qa-permission-mode') || null,
+      contextUsage: null,
       isStreaming: false,
       abortController: null,
-      currentWorkspace: null,
-      workspaceHistory: JSON.parse(localStorage.getItem('qa-workspaces') || '[]'),
-      contextUsage: null,
     };
 
     function setCurrentThread(threadId) {
@@ -443,32 +436,27 @@
     // ============== Elements Reference ==============
     const el = {
       sidebar: document.getElementById('sidebar'),
-      sessionList: document.getElementById('sessions-container'),
+      sidebarBackdrop: document.getElementById('sidebar-backdrop'),
+      projectsContainer: document.getElementById('projects-container'),
+      expandAllBtn: document.getElementById('expand-all-btn'),
+      collapseAllBtn: document.getElementById('collapse-all-btn'),
+      addProjectBtn: document.getElementById('add-project-btn'),
+      addProjectForm: document.getElementById('add-project-form'),
+      newProjectPathInput: document.getElementById('new-project-path-input'),
+      newProjectNameInput: document.getElementById('new-project-name-input'),
+      submitAddProjectBtn: document.getElementById('submit-add-project-btn'),
+      cancelAddProjectBtn: document.getElementById('cancel-add-project-btn'),
       messagesContainer: document.getElementById('messages-container'),
       emptyState: document.getElementById('empty-state'),
       messageInput: document.getElementById('message-input'),
       sendBtn: document.getElementById('send-btn'),
-      newChatBtn: document.getElementById('new-chat-btn'),
-      clearAllBtn: document.getElementById('clear-all-sessions-btn'),
       menuToggle: document.getElementById('menu-toggle'),
-      connectionStatus: document.getElementById('connection-status'),
+      settingsBtn: document.getElementById('settings-btn'),
       contextUsageBar: document.getElementById('context-usage-bar'),
       contextUsageBlocks: document.getElementById('context-usage-blocks'),
       contextUsageLabel: document.getElementById('context-usage-label'),
-      blocksToggleBtn: document.getElementById('blocks-toggle-btn'),
-      blocksToggleDot: document.getElementById('blocks-toggle-dot'),
-      blocksToggleText: document.getElementById('blocks-toggle-text'),
-      workspaceInput: document.getElementById('workspace-input'),
-      workspaceSetBtn: document.getElementById('workspace-set-btn'),
-      workspaceStatus: document.getElementById('workspace-status'),
       modeNormalBtn: document.getElementById('mode-normal'),
       modeBlocksBtn: document.getElementById('mode-blocks'),
-      toolsPanel: document.getElementById('tools-panel'),
-      toolsPanelToggleBtn: document.getElementById('tools-panel-toggle-btn'),
-      toolsPanelCloseBtn: document.getElementById('tools-panel-close-btn'),
-      toolsList: document.getElementById('tools-list'),
-      toolsCountBadge: document.getElementById('tools-count-badge'),
-      toolsBadgeBtn: document.getElementById('tools-badge-btn'),
     };
 
     function setMode(mode) {
@@ -481,109 +469,207 @@
       }
       state.currentMode = mode;
       if (mode === 'blocks') {
-        if (el.modeNormalBtn) el.modeNormalBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors text-txt-subtle hover:text-white';
-        if (el.modeBlocksBtn) el.modeBlocksBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors bg-brand text-white font-medium shadow-sm';
+        if (el.modeNormalBtn) el.modeNormalBtn.className = 'px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md text-[11px] sm:text-xs transition-colors text-txt-subtle hover:text-white';
+        if (el.modeBlocksBtn) el.modeBlocksBtn.className = 'px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md text-[11px] sm:text-xs transition-colors bg-brand text-white font-medium shadow-sm';
       } else {
-        if (el.modeNormalBtn) el.modeNormalBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors bg-brand text-white font-medium shadow-sm';
-        if (el.modeBlocksBtn) el.modeBlocksBtn.className = 'px-3 py-1 rounded-md text-xs transition-colors text-txt-subtle hover:text-white';
+        if (el.modeNormalBtn) el.modeNormalBtn.className = 'px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md text-[11px] sm:text-xs transition-colors bg-brand text-white font-medium shadow-sm';
+        if (el.modeBlocksBtn) el.modeBlocksBtn.className = 'px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-md text-[11px] sm:text-xs transition-colors text-txt-subtle hover:text-white';
       }
       if (state.currentThreadId && !state.isStreaming) {
         renderCurrentSessionView(state.currentThreadId);
       }
     }
 
-    function updateBlocksToggleUI() {
-      if (!el.blocksToggleBtn) return;
-      if (state.enableBlocks) {
-        el.blocksToggleBtn.className = 'flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-sans font-medium border transition-colors cursor-pointer select-none bg-brand/10 border-brand/40 text-brand hover:bg-brand/20';
-        if (el.blocksToggleDot) el.blocksToggleDot.className = 'w-1.5 h-1.5 rounded-full bg-brand';
-        if (el.blocksToggleText) el.blocksToggleText.textContent = 'Blocks: ON';
-      } else {
-        el.blocksToggleBtn.className = 'flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-sans font-medium border transition-colors cursor-pointer select-none bg-dark-elevated border-dark-border text-txt-subtle hover:text-white';
-        if (el.blocksToggleDot) el.blocksToggleDot.className = 'w-1.5 h-1.5 rounded-full bg-txt-subtle';
-        if (el.blocksToggleText) el.blocksToggleText.textContent = 'Blocks: OFF';
+    // ============== Projects & Sessions API ==============
+    async function loadProjects() {
+      try {
+        const res = await fetch('/api/projects');
+        if (!res.ok) return;
+        const data = await res.json();
+        state.projects = data.projects || [];
+
+        // If no projects tracked yet, auto-add default workspace as initial project
+        if (state.projects.length === 0) {
+          try {
+            const wsRes = await fetch('/api/workspace');
+            if (wsRes.ok) {
+              const wsData = await wsRes.json();
+              const defaultPath = wsData.workspace || '.';
+              const name = defaultPath.split('/').filter(Boolean).pop() || 'Default Project';
+              const createRes = await fetch('/api/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, path: defaultPath })
+              });
+              if (createRes.ok) {
+                const newProj = await createRes.json();
+                state.projects = [newProj];
+              }
+            }
+          } catch (err) {
+            console.error('Failed to auto-add default project:', err);
+          }
+        }
+
+        // Auto-expand active or first project
+        if (state.projects.length > 0) {
+          const activeProj = state.projects.find(p => p.id === state.activeProjectId) || state.projects[0];
+          if (activeProj) {
+            state.activeProjectId = activeProj.id;
+            localStorage.setItem('qa-active-project-id', activeProj.id);
+            state.expandedProjects.add(activeProj.id);
+            await loadProjectSessions(activeProj.id);
+          }
+        }
+
+        renderProjects();
+      } catch (e) {
+        console.error('Failed to load projects:', e);
       }
     }
 
-    // ============== Health Check ==============
-    async function checkHealth() {
+    async function loadProjectSessions(projectId) {
       try {
-        const res = await fetch('/api/health');
-        const data = await res.json();
-        if (data.status === 'ok') {
-          el.connectionStatus.textContent = 'Agent Online';
-          el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30';
+        const res = await fetch(`/api/projects/${projectId}/sessions`);
+        if (res.ok) {
+          const data = await res.json();
+          state.projectSessions[projectId] = data.sessions || [];
         } else {
-          el.connectionStatus.textContent = 'Degraded';
-          el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30';
+          state.projectSessions[projectId] = [];
         }
       } catch (e) {
-        el.connectionStatus.textContent = 'Offline';
-        el.connectionStatus.className = 'font-mono text-[10px] px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/30';
+        console.error('Failed to load project sessions:', e);
+        state.projectSessions[projectId] = [];
       }
     }
 
-    // ============== Workspace Management ==============
-    async function loadWorkspace() {
-      try {
-        const params = state.currentThreadId ? `?thread_id=${encodeURIComponent(state.currentThreadId)}` : '';
-        const res = await fetch(`/api/workspaces/current${params}`);
-        const data = await res.json();
-        state.currentWorkspace = data.workspace;
-        updateWorkspaceUI(data.workspace);
-      } catch (e) {
-        console.error('Failed to load workspace:', e);
+    async function addNewProject(name, path) {
+      if (!path || !path.trim()) {
+        showNotification('Please provide a valid project directory path', 'error');
+        return false;
       }
-    }
+      const cleanPath = path.trim();
+      const projName = (name && name.trim()) ? name.trim() : (cleanPath.split('/').filter(Boolean).pop() || 'Project');
 
-    async function setWorkspace(workspacePath) {
       try {
-        const res = await fetch('/api/workspaces/select', {
+        const res = await fetch('/api/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            thread_id: state.currentThreadId,
-            workspace: workspacePath 
-          }),
+          body: JSON.stringify({ name: projName, path: cleanPath })
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.detail || `Server returned error ${res.status}`);
-        }
+
         const data = await res.json();
-        state.currentWorkspace = data.workspace;
-        
-        // Track workspace history
-        state.workspaceHistory = [data.workspace, ...state.workspaceHistory.filter(p => p !== data.workspace)].slice(0, 10);
-        localStorage.setItem('qa-workspaces', JSON.stringify(state.workspaceHistory));
-        
-        updateWorkspaceUI(data.workspace);
-        showNotification(`Workspace set to: ${shortenPath(data.workspace)}`, 'success');
-      } catch(e) {
-        showNotification(`Workspace error: ${e.message}`, 'error');
+        if (!res.ok) {
+          showNotification(data.detail || 'Failed to add project', 'error');
+          return false;
+        }
+
+        state.projects.unshift(data);
+        state.activeProjectId = data.id;
+        localStorage.setItem('qa-active-project-id', data.id);
+        state.expandedProjects.add(data.id);
+        await loadProjectSessions(data.id);
+        renderProjects();
+        startNewChat();
+        showNotification(`Project "${projName}" added`, 'success');
+        return true;
+      } catch (e) {
+        showNotification(e.message || 'Failed to add project', 'error');
+        return false;
       }
     }
 
-    function updateWorkspaceUI(workspace) {
-      if (el.workspaceInput) el.workspaceInput.value = workspace || '';
-      if (el.workspaceStatus) el.workspaceStatus.textContent = workspace ? shortenPath(workspace) : 'Not set';
+    async function deleteProject(projectId) {
+      try {
+        const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+        if (res.ok) {
+          state.projects = state.projects.filter(p => p.id !== projectId);
+          state.expandedProjects.delete(projectId);
+          delete state.projectSessions[projectId];
+          if (state.activeProjectId === projectId) {
+            if (state.projects.length > 0) {
+              state.activeProjectId = state.projects[0].id;
+              localStorage.setItem('qa-active-project-id', state.projects[0].id);
+              state.expandedProjects.add(state.projects[0].id);
+              await loadProjectSessions(state.projects[0].id);
+            } else {
+              state.activeProjectId = null;
+              localStorage.removeItem('qa-active-project-id');
+            }
+          }
+          renderProjects();
+          showNotification('Project removed from tracking', 'info');
+        }
+      } catch (e) {
+        showNotification('Failed to remove project', 'error');
+      }
     }
 
-    function shortenPath(p) {
-      const parts = p.split('/');
-      return parts.length > 3 ? '.../' + parts.slice(-3).join('/') : p;
+    async function toggleProject(projectId) {
+      const proj = state.projects.find(p => p.id === projectId);
+      if (proj) {
+        state.activeProjectId = proj.id;
+        localStorage.setItem('qa-active-project-id', proj.id);
+      }
+
+      if (state.expandedProjects.has(projectId)) {
+        state.expandedProjects.delete(projectId);
+        renderProjects();
+      } else {
+        state.expandedProjects.add(projectId);
+        if (!state.projectSessions[projectId]) {
+          state.loadingProjects.add(projectId);
+          renderProjects();
+          await loadProjectSessions(projectId);
+          state.loadingProjects.delete(projectId);
+        }
+        renderProjects();
+      }
+    }
+
+    async function expandAllProjects() {
+      const toLoad = [];
+      state.projects.forEach(p => {
+        state.expandedProjects.add(p.id);
+        if (!state.projectSessions[p.id]) {
+          state.loadingProjects.add(p.id);
+          toLoad.push(loadProjectSessions(p.id).then(() => state.loadingProjects.delete(p.id)));
+        }
+      });
+      renderProjects();
+      if (toLoad.length > 0) {
+        await Promise.all(toLoad);
+        renderProjects();
+      }
+    }
+
+    function collapseAllProjects() {
+      state.expandedProjects.clear();
+      renderProjects();
     }
 
     // ============== Streaming Logic ==============
     async function* streamChat(message, threadId, signal) {
+      let skillsPayload = null;
+      if (state.skillsMode === 'all') {
+        skillsPayload = 'all';
+      } else if (state.skillsMode === 'none') {
+        skillsPayload = [];
+      } else if (state.skillsMode === 'custom') {
+        skillsPayload = Array.isArray(state.skillsList) ? state.skillsList : [];
+      }
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           message, 
           thread_id: threadId,
-          workspace: state.currentWorkspace || undefined,
+          project_id: state.activeProjectId || null,
           response_mode: state.enableBlocks ? 'blocks' : 'normal',
+          setting_sources: state.settingSources,
+          skills: skillsPayload,
+          permission_mode: state.permissionMode,
         }),
         signal,
       });
@@ -631,66 +717,168 @@
     }
 
     // ============== Render Functions ==============
-    function renderSessions() {
-      if (state.sessions.length === 0) {
-        el.sessionList.innerHTML = `
+    function renderProjects() {
+      if (!el.projectsContainer) return;
+
+      if (!state.projects || state.projects.length === 0) {
+        el.projectsContainer.innerHTML = `
           <div class="px-3 py-6 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-xl my-2">
-            No history yet
+            No projects yet — add one to get started
           </div>
         `;
         return;
       }
 
-      el.sessionList.innerHTML = state.sessions.map(s => {
-        const isActive = s.thread_id === state.currentThreadId;
-        const titleText = s.first_message && s.first_message !== s.thread_id ? s.first_message : 'New conversation';
+      el.projectsContainer.innerHTML = state.projects.map(project => {
+        const isExpanded = state.expandedProjects.has(project.id);
+        const isActive = state.activeProjectId === project.id;
+        const isLoading = state.loadingProjects.has(project.id);
+        const sessions = state.projectSessions[project.id] || [];
+
+        let sessionsHtml = '';
+        if (isExpanded) {
+          if (isLoading) {
+            sessionsHtml = `
+              <div class="py-2.5 px-4 text-center text-[10px] text-txt-subtle font-mono flex items-center justify-center gap-1.5">
+                <svg class="w-3 h-3 animate-spin text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Loading conversations...</span>
+              </div>
+            `;
+          } else if (sessions.length === 0) {
+            sessionsHtml = `
+              <div class="py-2 px-5 text-[10px] text-txt-subtle italic flex items-center justify-between">
+                <span>No conversations yet</span>
+                <button class="project-new-chat-btn text-[10px] text-brand hover:text-brand-hover font-medium underline cursor-pointer" data-project-id="${project.id}">Start chat</button>
+              </div>
+            `;
+          } else {
+            sessionsHtml = `
+              <div class="pl-3 pr-1 py-1 space-y-0.5 border-l border-dark-border/40 ml-3.5 my-1">
+                ${sessions.map(s => {
+                  const isCurrentSession = s.thread_id === state.currentThreadId;
+                  const rawTitle = s.first_message && s.first_message !== s.thread_id ? s.first_message : 'New conversation';
+                  const truncatedTitle = rawTitle.length > 40 ? rawTitle.slice(0, 40) + '...' : rawTitle;
+                  return `
+                    <div class="session-item group px-2.5 py-1.5 rounded-lg cursor-pointer transition-all duration-150 flex items-center justify-between ${isCurrentSession ? 'bg-dark-elevated border border-brand/40 text-white font-medium shadow-sm' : 'hover:bg-dark-elevated/50 text-txt-muted hover:text-white border border-transparent'}" data-thread-id="${s.thread_id}" data-project-id="${project.id}">
+                      <span class="text-[11px] truncate flex-1 leading-snug">${escapeHtml(truncatedTitle)}</span>
+                      <button class="delete-session-btn opacity-0 group-hover:opacity-100 p-0.5 hover:text-red-400 text-txt-subtle transition-opacity ml-1 shrink-0" data-thread-id="${s.thread_id}" data-project-id="${project.id}" title="Delete session">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                      </button>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `;
+          }
+        }
+
         return `
-          <div class="session-item group px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 flex items-center justify-between ${isActive ? 'bg-dark-elevated border border-brand-border text-white shadow-sm' : 'hover:bg-dark-elevated/60 text-txt-muted hover:text-white border border-transparent'}" data-thread-id="${s.thread_id}">
-            <div class="flex-1 min-w-0 pr-2">
-              <div class="font-medium text-xs truncate capitalize text-txt-main">${escapeHtml(titleText)}</div>
-              <div class="font-mono text-[9px] text-txt-subtle/80 truncate mt-0.5">${s.thread_id}</div>
+          <div class="project-card rounded-xl border transition-all ${isActive ? 'bg-dark-surface/60 border-dark-border' : 'border-transparent hover:border-dark-border/40'}" data-project-id="${project.id}">
+            <div class="project-header group px-2.5 py-2 rounded-xl cursor-pointer flex items-center justify-between hover:bg-dark-elevated/40 transition-colors" data-project-id="${project.id}">
+              <div class="flex items-center gap-2 min-w-0 flex-1">
+                <svg class="project-chevron w-3.5 h-3.5 text-txt-subtle transition-transform duration-200 shrink-0 ${isExpanded ? 'rotate-90 text-brand' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/>
+                </svg>
+                <span class="font-medium text-xs text-white truncate" title="${escapeHtml(project.path)}">${escapeHtml(project.name)}</span>
+              </div>
+              <div class="flex items-center gap-0.5 shrink-0">
+                <button class="project-new-chat-btn opacity-0 group-hover:opacity-100 p-1 hover:text-brand text-txt-subtle transition-opacity" data-project-id="${project.id}" title="New conversation in ${escapeHtml(project.name)}">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                  </svg>
+                </button>
+                <button class="delete-project-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 text-txt-subtle transition-opacity" data-project-id="${project.id}" title="Remove project from tracking">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </button>
+              </div>
             </div>
-            <button class="delete-session-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity" data-thread-id="${s.thread_id}" title="Delete session">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-              </svg>
-            </button>
+            ${sessionsHtml}
           </div>
         `;
       }).join('');
 
-      // Add Click Listeners
-      el.sessionList.querySelectorAll('.session-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-          if (e.target.closest('.delete-session-btn')) return;
-          selectSession(item.dataset.threadId);
+      // Project expand/collapse click
+      el.projectsContainer.querySelectorAll('.project-header').forEach(header => {
+        header.addEventListener('click', async (e) => {
+          if (e.target.closest('.delete-project-btn') || e.target.closest('.project-new-chat-btn')) return;
+          const projectId = parseInt(header.dataset.projectId, 10);
+          await toggleProject(projectId);
         });
       });
 
-      el.sessionList.querySelectorAll('.delete-session-btn').forEach(btn => {
+      // Per-project New Chat button click
+      el.projectsContainer.querySelectorAll('.project-new-chat-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
-          deleteSession(btn.dataset.threadId);
+          const projectId = parseInt(btn.dataset.projectId, 10);
+          const proj = state.projects.find(p => p.id === projectId);
+          if (proj) {
+            state.activeProjectId = proj.id;
+            localStorage.setItem('qa-active-project-id', proj.id);
+            state.expandedProjects.add(proj.id);
+          }
+          startNewChat();
+        });
+      });
+
+      // Project delete click
+      el.projectsContainer.querySelectorAll('.delete-project-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const projectId = parseInt(btn.dataset.projectId, 10);
+          if (confirm('Remove this project from sidebar tracking? (Files and conversations will be preserved)')) {
+            await deleteProject(projectId);
+          }
+        });
+      });
+
+      // Session click
+      el.projectsContainer.querySelectorAll('.session-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.closest('.delete-session-btn')) return;
+          const threadId = item.dataset.threadId;
+          const projectId = parseInt(item.dataset.projectId, 10);
+          const proj = state.projects.find(p => p.id === projectId);
+          if (proj) {
+            state.activeProjectId = proj.id;
+            localStorage.setItem('qa-active-project-id', proj.id);
+          }
+          selectSession(threadId);
+        });
+      });
+
+      // Session delete click
+      el.projectsContainer.querySelectorAll('.delete-session-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const threadId = btn.dataset.threadId;
+          const projectId = parseInt(btn.dataset.projectId, 10);
+          await deleteSession(threadId, projectId);
         });
       });
     }
 
     function renderMessageNode(msg) {
       const wrapper = document.createElement('div');
-      wrapper.className = 'animate-msg w-full';
+      wrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0';
 
       if (msg.type === 'human') {
         wrapper.innerHTML = `
-          <div class="flex justify-end mb-4">
-            <div class="bg-dark-elevated border border-dark-border text-white text-sm rounded-2xl rounded-tr-xs px-4 py-3 max-w-[80%] shadow-sm">
-              ${escapeHtml(msg.content)}
-            </div>
+          <div class="flex justify-end mb-2.5 min-w-0 max-w-full">
+            <div class="bg-dark-elevated/90 text-txt-main text-xs sm:text-sm rounded-xl px-3 py-1.5 max-w-[80%] w-fit break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</div>
           </div>
         `;
       } else if (msg.type === 'ai') {
         const parsedContent = marked.parse(msg.content || '');
         const usageBadge = msg.usage ? `
-          <div class="mt-3 pt-2 border-t border-dark-border/60 flex items-center gap-3 font-mono text-[10px] text-txt-subtle">
+          <div class="mt-2 pt-1.5 border-t border-dark-border/40 flex items-center gap-3 font-mono text-[10px] text-txt-subtle flex-wrap">
             <span title="Input tokens">in: <strong class="text-txt-muted">${msg.usage.input_tokens || 0}</strong></span>
             <span title="Output tokens">out: <strong class="text-txt-muted">${msg.usage.output_tokens || 0}</strong></span>
             <span title="Total tokens">total: <strong class="text-brand">${msg.usage.total_tokens || 0}</strong></span>
@@ -698,13 +886,8 @@
         ` : '';
 
         wrapper.innerHTML = `
-          <div class="flex items-start gap-3 mb-6">
-            <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 mt-0.5 text-brand">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-              </svg>
-            </div>
-            <div class="flex-1 bg-dark-surface border border-dark-border rounded-2xl rounded-tl-xs px-5 py-4 max-w-[90%] shadow-card-glow prose-dark">
+          <div class="mb-4 w-full min-w-0 max-w-full">
+            <div class="prose-dark min-w-0 max-w-full overflow-hidden break-words px-1 py-1">
               ${parsedContent}
               ${usageBadge}
             </div>
@@ -712,31 +895,22 @@
         `;
       } else if (msg.type === 'thinking') {
         wrapper.innerHTML = `
-          <div class="flex items-start gap-3 mb-4">
-            <div class="w-7 h-7 rounded-lg bg-dark-elevated border border-dark-border flex items-center justify-center shrink-0 mt-0.5 text-txt-subtle">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-              </svg>
-            </div>
-            <div class="flex-1 bg-dark-surface/60 border border-dark-border/60 rounded-xl px-4 py-3 max-w-[90%] font-mono text-xs">
+          <div class="mb-3 w-full min-w-0 max-w-full">
+            <div class="bg-dark-surface/40 border border-dark-border/60 rounded-xl px-3.5 py-2 text-xs font-mono min-w-0 max-w-full overflow-hidden">
               <details class="group">
-                <summary class="flex items-center justify-between cursor-pointer text-txt-muted hover:text-white select-none">
-                  <span class="font-sans font-medium text-xs flex items-center gap-2">
-                    <span>Thought Process</span>
-                  </span>
-                  <svg class="w-4 h-4 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <summary class="flex items-center justify-between cursor-pointer text-txt-subtle hover:text-txt-muted select-none">
+                  <span class="text-[11px] font-sans font-medium text-txt-subtle">Thought Process</span>
+                  <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-180 text-txt-subtle shrink-0 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                   </svg>
                 </summary>
-                <div class="mt-2.5 pt-2.5 border-t border-dark-border text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px]">
-                  ${escapeHtml(msg.content)}
-                </div>
+                <div class="mt-2 pt-2 border-t border-dark-border/40 text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px] break-words overflow-x-auto">${escapeHtml(msg.content)}</div>
               </details>
             </div>
           </div>
         `;
-      } else if (msg.type === 'tool_result') {
-        // Hide tool calls from main panel
+      } else if (msg.type === 'tool' || msg.type === 'tool_result') {
+        renderToolCallNode(msg);
         return;
       }
 
@@ -745,58 +919,99 @@
     }
 
     function renderToolCallNode(tool) {
-      const emptyEl = document.getElementById('tools-empty-state');
-      if (emptyEl) emptyEl.remove();
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0 my-2';
 
-      const item = document.createElement('div');
-      item.className = 'animate-msg bg-dark-surface border border-dark-border rounded-xl p-3 text-xs space-y-2';
-      item.innerHTML = `
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">Tool:</span>
-          <span class="bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 text-white font-mono text-[11px]">${escapeHtml(tool.name || 'tool')}</span>
+      const toolName = tool.name || tool.tool_name || 'Tool';
+      const inputCmd = tool.input?.command ? `$ ${tool.input.command}` : '';
+      const inputDesc = tool.input?.description || inputCmd || '';
+      const inputObj = tool.input || null;
+      const rawOutput = tool.content ?? tool.output ?? tool.result ?? '';
+      const outputText = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput, null, 2);
+
+      wrapper.innerHTML = `
+        <div class="bg-dark-surface/90 hover:bg-dark-surface border border-dark-border/80 hover:border-brand/40 rounded-xl overflow-hidden shadow-sm transition-all min-w-0 max-w-full">
+          <details class="group">
+            <summary class="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none bg-dark-elevated/40 hover:bg-dark-elevated/80 transition-colors min-w-0">
+              <div class="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden pr-2">
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <span class="font-mono text-[11px] font-semibold text-txt-main px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">${escapeHtml(toolName)}</span>
+                </div>
+                <span class="font-mono text-xs text-txt-muted truncate block min-w-0 flex-1">
+                  ${inputCmd ? escapeHtml(inputCmd) : (inputDesc ? escapeHtml(inputDesc) : 'Executed tool')}
+                </span>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0 ml-1">
+                <span class="text-[10px] font-mono text-txt-subtle group-open:hidden hidden sm:inline">View output</span>
+                <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-180 text-txt-subtle shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </div>
+            </summary>
+            <div class="border-t border-dark-border/60 bg-[#0a0b0e] p-3 text-xs font-mono space-y-2.5 overflow-hidden">
+              ${inputObj && Object.keys(inputObj).length > 0 ? `
+                <div class="min-w-0 max-w-full overflow-hidden">
+                  <div class="text-[10px] text-txt-subtle uppercase tracking-wider mb-1 font-mono">Input Parameters</div>
+                  <pre class="text-[11px] text-emerald-400/90 overflow-x-auto bg-dark-surface/80 p-2.5 rounded-lg border border-dark-border/60 leading-relaxed max-h-40 max-w-full whitespace-pre-wrap break-all">${escapeHtml(formatJson(inputObj))}</pre>
+                </div>
+              ` : ''}
+              ${outputText ? `
+                <div class="min-w-0 max-w-full overflow-hidden">
+                  <div class="text-[10px] text-txt-subtle uppercase tracking-wider mb-1 font-mono">Output</div>
+                  <pre class="text-[11px] text-txt-muted overflow-x-auto bg-dark-surface/80 p-2.5 rounded-lg border border-dark-border/60 leading-relaxed max-h-56 max-w-full whitespace-pre-wrap break-all">${escapeHtml(outputText)}</pre>
+                </div>
+              ` : ''}
+            </div>
+          </details>
         </div>
-        ${tool.input && Object.keys(tool.input).length > 0 ? `
-          <div>
-            <div class="text-[9px] text-txt-subtle uppercase tracking-wider mb-1 font-mono">INPUT:</div>
-            <pre class="text-[10px] text-emerald-300 overflow-x-auto bg-dark-bg p-2 rounded border border-dark-border font-mono max-h-36">${escapeHtml(formatJson(tool.input))}</pre>
-          </div>
-        ` : ''}
       `;
-      if (el.toolsList) el.toolsList.appendChild(item);
-      updateToolCount();
+
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
     }
 
-    function clearToolCalls() {
-      if (el.toolsList) {
-        el.toolsList.innerHTML = `
-          <div id="tools-empty-state" class="px-3 py-6 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-xl my-2">
-            No tool calls
-          </div>
-        `;
-      }
-      updateToolCount();
-    }
-
-    function updateToolCount() {
-      const count = el.toolsList ? el.toolsList.querySelectorAll('.bg-dark-surface').length : 0;
-      if (el.toolsCountBadge) el.toolsCountBadge.textContent = count;
-      if (el.toolsBadgeBtn) el.toolsBadgeBtn.textContent = count;
-    }
+    function clearToolCalls() {}
 
     // ============== Blocks Audio Walkthrough Player ==============
     const audioPlayer = {
       isPlaying: false,
+      groupId: null,
       currentIndex: 0,
       rate: 1.0,
       blocks: [],
       threadId: null,
     };
 
+    function getBlockGroups(blocks) {
+      if (!blocks || blocks.length === 0) return [];
+      const groups = [];
+      let currentGroup = [];
+      let currentParentUuid = null;
+
+      for (const b of blocks) {
+        const isNewGroup = (b.parentUuid && currentParentUuid && b.parentUuid !== currentParentUuid) ||
+                           (!b.parentUuid && b.sequence_id === 1 && currentGroup.length > 0);
+
+        if (isNewGroup && currentGroup.length > 0) {
+          groups.push(currentGroup);
+          currentGroup = [];
+        }
+        currentParentUuid = b.parentUuid || null;
+        currentGroup.push(b);
+      }
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+      }
+      return groups;
+    }
+
     function stopBlocksAudio() {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
       audioPlayer.isPlaying = false;
+      audioPlayer.groupId = null;
       document.querySelectorAll('.block-card-container').forEach(card => {
         card.classList.remove('ring-2', 'ring-brand', 'border-brand', 'shadow-glow');
         const playBtn = card.querySelector('.block-play-btn');
@@ -805,32 +1020,35 @@
           playBtn.innerHTML = `<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span>Listen</span>`;
         }
       });
-      updateAudioPlayerBarUI();
+      updateAllAudioPlayerBarsUI();
     }
 
-    function updateAudioPlayerBarUI() {
-      const playIcon = document.getElementById('audio-play-icon');
-      const playLabel = document.getElementById('audio-play-label');
-      const statusText = document.getElementById('audio-status-text');
-      const speedBtn = document.getElementById('audio-speed-btn');
+    function updateAllAudioPlayerBarsUI() {
+      document.querySelectorAll('.turn-audio-player').forEach(bar => {
+        const barGroupId = parseInt(bar.dataset.groupId, 10);
+        const playIcon = bar.querySelector('.turn-play-icon');
+        const playLabel = bar.querySelector('.turn-play-label');
+        const statusText = bar.querySelector('.turn-audio-status');
+        const speedBtn = bar.querySelector('.turn-speed-btn');
 
-      if (speedBtn) speedBtn.textContent = `${audioPlayer.rate}x`;
+        if (speedBtn) speedBtn.textContent = `${audioPlayer.rate}x`;
 
-      if (audioPlayer.isPlaying) {
-        if (playIcon) playIcon.innerHTML = `<path stroke="currentColor" stroke-width="2.5" stroke-linecap="round" d="M10 6v12M14 6v12"/>`;
-        if (playLabel) playLabel.textContent = 'Pause';
-        if (statusText) {
-          const curSeq = audioPlayer.blocks[audioPlayer.currentIndex]?.sequence_id ?? (audioPlayer.currentIndex + 1);
-          statusText.innerHTML = `<span class="text-brand font-medium">Playing Section ${curSeq} of ${audioPlayer.blocks.length}</span>`;
+        if (audioPlayer.isPlaying && audioPlayer.groupId === barGroupId) {
+          if (playIcon) playIcon.innerHTML = `<path stroke="currentColor" stroke-width="2.5" stroke-linecap="round" d="M10 6v12M14 6v12"/>`;
+          if (playLabel) playLabel.textContent = 'Pause';
+          if (statusText) {
+            const curSeq = audioPlayer.blocks[audioPlayer.currentIndex]?.sequence_id ?? (audioPlayer.currentIndex + 1);
+            statusText.innerHTML = `· <span class="text-brand font-medium">Playing ${curSeq}/${audioPlayer.blocks.length}</span>`;
+          }
+        } else {
+          if (playIcon) playIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
+          if (playLabel) playLabel.textContent = 'Play All';
+          if (statusText) statusText.textContent = '';
         }
-      } else {
-        if (playIcon) playIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
-        if (playLabel) playLabel.textContent = 'Play All';
-        if (statusText) statusText.textContent = audioPlayer.blocks.length > 0 ? `Ready · ${audioPlayer.blocks.length} sections` : 'Ready';
-      }
+      });
     }
 
-    function playBlockAtIndex(index, blocks, threadId) {
+    function playBlockAtIndex(index, blocks, threadId, groupId = 0) {
       if (!('speechSynthesis' in window) || !blocks || blocks.length === 0) return;
       if (index < 0 || index >= blocks.length) {
         stopBlocksAudio();
@@ -840,12 +1058,16 @@
       window.speechSynthesis.cancel();
       audioPlayer.blocks = blocks;
       audioPlayer.threadId = threadId;
+      audioPlayer.groupId = groupId;
       audioPlayer.currentIndex = index;
       audioPlayer.isPlaying = true;
 
       // Update block highlights
-      document.querySelectorAll('.block-card-container').forEach((card, i) => {
-        const isCurrent = i === index;
+      document.querySelectorAll('.block-card-container').forEach(card => {
+        const cardGroupId = parseInt(card.dataset.groupId, 10);
+        const cardIndex = parseInt(card.dataset.blockIdx, 10);
+        const isCurrent = cardGroupId === groupId && cardIndex === index;
+
         card.classList.toggle('ring-2', isCurrent);
         card.classList.toggle('ring-brand', isCurrent);
         card.classList.toggle('border-brand', isCurrent);
@@ -867,7 +1089,7 @@
         }
       });
 
-      updateAudioPlayerBarUI();
+      updateAllAudioPlayerBarsUI();
 
       const block = blocks[index];
       const textToSpeak = block.spoken_explanation || block.markdown || '';
@@ -875,9 +1097,9 @@
       utterance.rate = audioPlayer.rate;
 
       utterance.onend = () => {
-        if (!audioPlayer.isPlaying) return;
+        if (!audioPlayer.isPlaying || audioPlayer.groupId !== groupId) return;
         if (index + 1 < blocks.length) {
-          playBlockAtIndex(index + 1, blocks, threadId);
+          playBlockAtIndex(index + 1, blocks, threadId, groupId);
         } else {
           stopBlocksAudio();
         }
@@ -890,92 +1112,82 @@
       window.speechSynthesis.speak(utterance);
     }
 
-    function renderBlocksAudioBar(blocks, threadId) {
-      if (!blocks || blocks.length === 0) return;
+    function renderTurnAudioBar(turnBlocks, threadId, groupId = 0) {
+      if (!turnBlocks || turnBlocks.length === 0) return;
       const bar = document.createElement('div');
-      bar.id = 'blocks-audio-player';
-      bar.className = 'animate-msg w-full bg-dark-surface/90 backdrop-blur-md border border-brand/40 shadow-glow rounded-2xl p-3 mb-6 text-xs sticky top-2 z-20';
+      bar.className = 'turn-audio-player animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto bg-dark-surface border border-dark-border hover:border-brand/40 rounded-xl px-3 py-2 mb-4 flex items-center justify-between gap-2 text-xs transition-colors';
+      bar.dataset.groupId = groupId;
       bar.innerHTML = `
-        <div class="flex items-center justify-between gap-3">
-          <div class="flex items-center gap-2.5 min-w-0">
-            <div class="w-8 h-8 rounded-xl bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 text-brand">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M11 5L6 9H2v6h4l5 4V5z"/>
-              </svg>
-            </div>
-            <div class="min-w-0">
-              <div class="font-medium text-xs text-white truncate flex items-center gap-2">
-                <span>Audio Walkthrough</span>
-                <span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-brand/10 text-brand border border-brand/20">${blocks.length} Sections</span>
-              </div>
-              <div id="audio-status-text" class="text-[11px] text-txt-subtle truncate mt-0.5 font-mono">Ready · ${blocks.length} sections</div>
-            </div>
+        <div class="flex items-center gap-2 min-w-0">
+          <div class="w-6 h-6 rounded-lg bg-brand/10 border border-brand/20 flex items-center justify-center shrink-0 text-brand">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M11 5L6 9H2v6h4l5 4V5z"/>
+            </svg>
           </div>
-          
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button id="audio-prev-btn" class="p-1.5 rounded-lg bg-dark-elevated border border-dark-border text-txt-subtle hover:text-white hover:border-brand-border transition-colors" title="Previous section">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-            </button>
-            
-            <button id="audio-play-btn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-white font-medium text-xs transition-colors shadow-glow">
-              <svg id="audio-play-icon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-              <span id="audio-play-label">Play All</span>
-            </button>
-            
-            <button id="audio-next-btn" class="p-1.5 rounded-lg bg-dark-elevated border border-dark-border text-txt-subtle hover:text-white hover:border-brand-border transition-colors" title="Next section">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            </button>
-
-            <button id="audio-speed-btn" class="px-2 py-1 rounded-lg bg-dark-elevated border border-dark-border text-txt-subtle hover:text-white font-mono text-[10px] transition-colors" title="Playback speed">
-              ${audioPlayer.rate}x
-            </button>
-            
-            <button id="audio-stop-btn" class="p-1.5 rounded-lg bg-dark-elevated border border-dark-border text-txt-subtle hover:text-red-400 transition-colors" title="Stop">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6h12v12H6z"/></svg>
-            </button>
-          </div>
+          <span class="font-medium text-xs text-white whitespace-nowrap">Audio Walkthrough</span>
+          <span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-brand/10 text-brand border border-brand/20">${turnBlocks.length} sections</span>
+          <span class="turn-audio-status text-[11px] text-txt-subtle font-mono truncate hidden sm:inline"></span>
+        </div>
+        <div class="flex items-center gap-1 shrink-0">
+          <button class="turn-prev-btn p-1 rounded-md bg-dark-elevated hover:bg-dark-border text-txt-subtle hover:text-white transition-colors" title="Previous section">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+          </button>
+          <button class="turn-play-btn flex items-center gap-1 px-2.5 py-1 rounded-md bg-brand hover:bg-brand-hover text-white font-medium text-[11px] transition-colors shadow-sm">
+            <svg class="turn-play-icon w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <span class="turn-play-label">Play All</span>
+          </button>
+          <button class="turn-next-btn p-1 rounded-md bg-dark-elevated hover:bg-dark-border text-txt-subtle hover:text-white transition-colors" title="Next section">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </button>
+          <button class="turn-speed-btn px-1.5 py-0.5 rounded-md bg-dark-elevated text-txt-subtle hover:text-white font-mono text-[10px] transition-colors" title="Playback speed">
+            ${audioPlayer.rate}x
+          </button>
+          <button class="turn-stop-btn p-1 rounded-md bg-dark-elevated hover:text-red-400 text-txt-subtle transition-colors" title="Stop">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6h12v12H6z"/></svg>
+          </button>
         </div>
       `;
 
-      bar.querySelector('#audio-play-btn')?.addEventListener('click', () => {
-        if (audioPlayer.isPlaying) {
+      bar.querySelector('.turn-play-btn')?.addEventListener('click', () => {
+        if (audioPlayer.isPlaying && audioPlayer.groupId === groupId) {
           stopBlocksAudio();
         } else {
-          playBlockAtIndex(audioPlayer.currentIndex || 0, blocks, threadId);
+          playBlockAtIndex(audioPlayer.groupId === groupId ? audioPlayer.currentIndex : 0, turnBlocks, threadId, groupId);
         }
       });
 
-      bar.querySelector('#audio-prev-btn')?.addEventListener('click', () => {
-        const prevIdx = Math.max(0, audioPlayer.currentIndex - 1);
-        playBlockAtIndex(prevIdx, blocks, threadId);
+      bar.querySelector('.turn-prev-btn')?.addEventListener('click', () => {
+        const cur = audioPlayer.groupId === groupId ? audioPlayer.currentIndex : 0;
+        const prevIdx = Math.max(0, cur - 1);
+        playBlockAtIndex(prevIdx, turnBlocks, threadId, groupId);
       });
 
-      bar.querySelector('#audio-next-btn')?.addEventListener('click', () => {
-        const nextIdx = Math.min(blocks.length - 1, audioPlayer.currentIndex + 1);
-        playBlockAtIndex(nextIdx, blocks, threadId);
+      bar.querySelector('.turn-next-btn')?.addEventListener('click', () => {
+        const cur = audioPlayer.groupId === groupId ? audioPlayer.currentIndex : -1;
+        const nextIdx = Math.min(turnBlocks.length - 1, cur + 1);
+        playBlockAtIndex(nextIdx, turnBlocks, threadId, groupId);
       });
 
-      bar.querySelector('#audio-speed-btn')?.addEventListener('click', (e) => {
+      bar.querySelector('.turn-speed-btn')?.addEventListener('click', (e) => {
         const speeds = [1.0, 1.25, 1.5, 2.0];
         const nextSpeed = speeds[(speeds.indexOf(audioPlayer.rate) + 1) % speeds.length];
         audioPlayer.rate = nextSpeed;
-        e.currentTarget.textContent = `${nextSpeed}x`;
-        if (audioPlayer.isPlaying) {
-          playBlockAtIndex(audioPlayer.currentIndex, blocks, threadId);
+        updateAllAudioPlayerBarsUI();
+        if (audioPlayer.isPlaying && audioPlayer.groupId === groupId) {
+          playBlockAtIndex(audioPlayer.currentIndex, turnBlocks, threadId, groupId);
         }
       });
 
-      bar.querySelector('#audio-stop-btn')?.addEventListener('click', () => {
+      bar.querySelector('.turn-stop-btn')?.addEventListener('click', () => {
         stopBlocksAudio();
       });
 
       el.messagesContainer.appendChild(bar);
-      updateAudioPlayerBarUI();
     }
 
-    function renderBlockNode(block, threadId, index = 0) {
+    function renderBlockNode(block, threadId, index = 0, groupId = 0) {
       const wrapper = document.createElement('div');
-      wrapper.className = 'animate-msg w-full flex items-start gap-3 mb-6';
+      wrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto mb-4 min-w-0';
       if (block.uuid) {
         wrapper.dataset.blockUuid = block.uuid;
       }
@@ -985,15 +1197,10 @@
       const spokenText = block.spoken_explanation || 'No spoken explanation provided.';
 
       wrapper.innerHTML = `
-        <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 mt-0.5 text-brand">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-          </svg>
-        </div>
-        <div class="block-card-container flex-1 bg-dark-surface border border-dark-border rounded-xl px-4 py-3 max-w-[90%] shadow-card-glow transition-all duration-300">
+        <div class="block-card-container w-full bg-dark-surface border border-dark-border rounded-xl px-4 py-3 shadow-sm transition-all duration-300" data-group-id="${groupId}" data-block-idx="${index}">
           <div class="flex items-center justify-between pb-2 mb-2 border-b border-dark-border/40">
             <span class="text-[11px] font-mono text-txt-subtle font-medium">Block ${seqId}</span>
-            <button type="button" class="block-play-btn flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2 py-0.5 rounded border border-brand/20 transition-colors" data-block-idx="${index}">
+            <button type="button" class="block-play-btn flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2 py-0.5 rounded border border-brand/20 transition-colors" data-block-idx="${index}" data-group-id="${groupId}">
               <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
               <span>Listen</span>
             </button>
@@ -1002,12 +1209,9 @@
             ${markdownContent}
           </div>
           <details class="group mt-2 pt-2 border-t border-dark-border/40">
-            <summary class="flex items-center gap-1 cursor-pointer text-xs text-txt-subtle hover:text-brand transition-colors select-none">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M11 5L6 9H2v6h4l5 4V5z"/>
-              </svg>
+            <summary class="flex items-center justify-between cursor-pointer text-xs text-txt-subtle hover:text-brand transition-colors select-none">
               <span>Read Aloud Script</span>
-              <svg class="w-3 h-3 ml-auto transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-3 h-3 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
               </svg>
             </summary>
@@ -1021,8 +1225,9 @@
       const playBtn = wrapper.querySelector('.block-play-btn');
       if (playBtn && 'speechSynthesis' in window) {
         playBtn.addEventListener('click', () => {
-          const allBlocks = state.blocks[threadId] || [block];
-          playBlockAtIndex(index, allBlocks, threadId);
+          const groups = getBlockGroups(state.blocks[threadId] || [block]);
+          const turnBlocks = groups[groupId] || [block];
+          playBlockAtIndex(index, turnBlocks, threadId, groupId);
         });
       }
 
@@ -1038,7 +1243,7 @@
 
       activeLoadingNode = document.createElement('div');
       activeLoadingNode.id = 'active-loader';
-      activeLoadingNode.className = 'animate-msg flex items-center gap-3 mb-4';
+      activeLoadingNode.className = 'animate-msg flex items-center gap-3 mb-4 w-full max-w-3xl lg:max-w-4xl mx-auto';
       activeLoadingNode.innerHTML = `
         <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 text-brand">
           <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1069,7 +1274,7 @@
     function showError(message) {
       hideLoadingIndicator();
       const wrapper = document.createElement('div');
-      wrapper.className = 'animate-msg flex justify-start mb-4';
+      wrapper.className = 'animate-msg flex justify-start mb-4 w-full max-w-3xl lg:max-w-4xl mx-auto';
       wrapper.innerHTML = `
         <div class="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 max-w-[85%] text-xs text-red-400">
           <span class="font-semibold block mb-1">Execution Error</span>
@@ -1114,19 +1319,6 @@
       // Legacy — tokens now shown via context bar
     }
 
-    // ============== API Interactions ==============
-    async function loadSessionsFromDB() {
-      try {
-        const res = await fetch('/api/sessions');
-        if (!res.ok) return;
-        const data = await res.json();
-        state.sessions = data.sessions || [];
-        renderSessions();
-      } catch (e) {
-        console.error('Failed to load sessions:', e);
-      }
-    }
-
     function renderCurrentSessionView(threadId = state.currentThreadId) {
       if (!threadId) return;
       el.messagesContainer.innerHTML = '';
@@ -1135,7 +1327,13 @@
       const messages = state.messages[threadId] || [];
       const blocks = state.blocks[threadId] || [];
       const hasBlocks = blocks.length > 0;
-      const cleanMessages = messages.filter(m => !m.content?.startsWith('Stop hook feedback:'));
+      const cleanMessages = messages.filter(m => {
+        if (typeof m.content !== 'string') return true;
+        if (m.content.startsWith('Stop hook feedback:')) return false;
+        if (m.content.startsWith('[structured-output-enforce]')) return false;
+        if (m.content.includes('You MUST call the StructuredOutput tool')) return false;
+        return true;
+      });
       const regularMessages = cleanMessages.filter(m => m.type !== 'tool_result');
 
       if (regularMessages.length === 0 && !hasBlocks) {
@@ -1147,39 +1345,62 @@
       el.emptyState.style.display = 'none';
 
       if (state.currentMode === 'blocks') {
-        for (const msg of cleanMessages) {
-          if (msg.type === 'tool_result') {
-            renderToolCallNode(msg);
-          } else if (msg.type === 'human') {
-            renderMessageNode(msg);
-          }
-        }
+        const groups = getBlockGroups(blocks);
+        const humanMessages = cleanMessages.filter(m => m.type === 'human');
+
         if (hasBlocks) {
-          renderBlocksAudioBar(blocks, threadId);
-          blocks.forEach((block, idx) => {
-            renderBlockNode(block, threadId, idx);
-          });
+          if (humanMessages.length > 0) {
+            humanMessages.forEach((hMsg, gIdx) => {
+              renderMessageNode(hMsg);
+              const turnBlocks = groups[gIdx];
+              if (turnBlocks && turnBlocks.length > 0) {
+                renderTurnAudioBar(turnBlocks, threadId, gIdx);
+                turnBlocks.forEach((b, bIdx) => {
+                  renderBlockNode(b, threadId, bIdx, gIdx);
+                });
+              }
+            });
+            for (let gIdx = humanMessages.length; gIdx < groups.length; gIdx++) {
+              const turnBlocks = groups[gIdx];
+              if (turnBlocks && turnBlocks.length > 0) {
+                renderTurnAudioBar(turnBlocks, threadId, gIdx);
+                turnBlocks.forEach((b, bIdx) => {
+                  renderBlockNode(b, threadId, bIdx, gIdx);
+                });
+              }
+            }
+          } else {
+            groups.forEach((turnBlocks, gIdx) => {
+              renderTurnAudioBar(turnBlocks, threadId, gIdx);
+              turnBlocks.forEach((b, bIdx) => {
+                renderBlockNode(b, threadId, bIdx, gIdx);
+              });
+            });
+          }
         } else {
+          for (const hMsg of humanMessages) {
+            renderMessageNode(hMsg);
+          }
           const noBlocksEl = document.createElement('div');
-          noBlocksEl.className = 'animate-msg flex items-center justify-center p-8 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-2xl my-4';
+          noBlocksEl.className = 'animate-msg flex items-center justify-center p-8 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-2xl my-4 w-full max-w-3xl lg:max-w-4xl mx-auto';
           noBlocksEl.textContent = 'No blocks in this session';
           el.messagesContainer.appendChild(noBlocksEl);
         }
       } else {
         for (const msg of cleanMessages) {
-          if (msg.type === 'tool_result') {
-            renderToolCallNode(msg);
-          } else {
-            renderMessageNode(msg);
-          }
+          renderMessageNode(msg);
         }
       }
     }
 
     async function selectSession(threadId) {
+      if (window.innerWidth < 1024) {
+        el.sidebar?.classList.add('-translate-x-full');
+        el.sidebarBackdrop?.classList.add('hidden');
+      }
       stopBlocksAudio();
       setCurrentThread(threadId);
-      renderSessions();
+      renderProjects();
       state.contextUsage = null;
       updateContextBar(null);
 
@@ -1187,7 +1408,8 @@
       showLoadingIndicator();
 
       try {
-        const res = await fetch(`/api/sessions/${threadId}/messages`);
+        const projectParam = state.activeProjectId ? `?project_id=${state.activeProjectId}` : '';
+        const res = await fetch(`/api/sessions/${threadId}/messages${projectParam}`);
         hideLoadingIndicator();
 
         if (res.ok) {
@@ -1209,6 +1431,10 @@
     }
 
     function startNewChat() {
+      if (window.innerWidth < 1024) {
+        el.sidebar?.classList.add('-translate-x-full');
+        el.sidebarBackdrop?.classList.add('hidden');
+      }
       stopBlocksAudio();
       // Abort any in-progress stream
       if (state.abortController) {
@@ -1220,7 +1446,7 @@
       state.contextUsage = null;
       updateContextBar(null);
       setCurrentThread(null);
-      renderSessions();
+      renderProjects();
       el.messagesContainer.innerHTML = '';
       el.messagesContainer.appendChild(el.emptyState);
       el.emptyState.style.display = 'flex';
@@ -1228,34 +1454,23 @@
       el.messageInput.focus();
     }
 
-    async function deleteSession(threadId) {
+    async function deleteSession(threadId, projectId) {
       stopBlocksAudio();
       try {
         await fetch(`/api/sessions/${threadId}`, { method: 'DELETE' });
       } catch (e) {}
 
-      state.sessions = state.sessions.filter(s => s.thread_id !== threadId);
+      if (projectId && state.projectSessions[projectId]) {
+        state.projectSessions[projectId] = state.projectSessions[projectId].filter(s => s.thread_id !== threadId);
+      }
       delete state.messages[threadId];
       delete state.blocks[threadId];
 
       if (state.currentThreadId === threadId) {
         startNewChat();
       } else {
-        renderSessions();
+        renderProjects();
       }
-    }
-
-    async function clearAllSessions() {
-      if (!confirm('Clear all conversation history?')) return;
-      try {
-        await fetch('/api/sessions', { method: 'DELETE' });
-      } catch (e) {
-        console.error('Failed to bulk delete sessions:', e);
-      }
-      state.sessions = [];
-      state.messages = {};
-      state.blocks = {};
-      startNewChat();
     }
 
     async function sendMessage(overrideText = null) {
@@ -1284,19 +1499,6 @@
         state.messages[state.currentThreadId] = [];
       }
       state.messages[state.currentThreadId].push(userMsg);
-
-      // Save session item preview
-      const sessionIndex = state.sessions.findIndex(s => s.thread_id === state.currentThreadId);
-      if (sessionIndex === -1) {
-        state.sessions.unshift({
-          thread_id: state.currentThreadId,
-          first_message: text.substring(0, 45),
-          updated_at: new Date().toISOString()
-        });
-      } else {
-        state.sessions[sessionIndex].updated_at = new Date().toISOString();
-      }
-      renderSessions();
 
       // Show loader
       showLoadingIndicator();
@@ -1333,14 +1535,9 @@
             if (data.type === 'text_delta') {
               if (!activeAiWrapper) {
                 activeAiWrapper = document.createElement('div');
-                activeAiWrapper.className = 'animate-msg w-full flex items-start gap-3 mb-6';
+                activeAiWrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto mb-4 min-w-0';
                 activeAiWrapper.innerHTML = `
-                  <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 mt-0.5 text-brand">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-                    </svg>
-                  </div>
-                  <div class="flex-1 bg-dark-surface border border-dark-border rounded-2xl rounded-tl-xs px-5 py-4 max-w-[90%] shadow-card-glow prose-dark ai-content-body">
+                  <div class="prose-dark ai-content-body min-w-0 max-w-full overflow-hidden break-words px-1 py-1">
                   </div>
                 `;
                 activeAiTextEl = activeAiWrapper.querySelector('.ai-content-body');
@@ -1362,24 +1559,17 @@
             else if (data.type === 'thinking_delta') {
               if (!activeThinkingTextEl) {
                 const thinkWrapper = document.createElement('div');
-                thinkWrapper.className = 'animate-msg w-full flex items-start gap-3 mb-4';
+                thinkWrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto mb-3 min-w-0';
                 thinkWrapper.innerHTML = `
-                  <div class="w-7 h-7 rounded-lg bg-dark-elevated border border-dark-border flex items-center justify-center shrink-0 mt-0.5 text-txt-subtle">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-                    </svg>
-                  </div>
-                  <div class="flex-1 bg-dark-surface/60 border border-dark-border/60 rounded-xl px-4 py-3 max-w-[90%] font-mono text-xs">
+                  <div class="bg-dark-surface/40 border border-dark-border/60 rounded-xl px-3.5 py-2 text-xs font-mono min-w-0 max-w-full overflow-hidden">
                     <details class="group" open>
-                      <summary class="flex items-center justify-between cursor-pointer text-txt-muted hover:text-white select-none">
-                        <span class="font-sans font-medium text-xs flex items-center gap-2">
-                          <span>Thought Process</span>
-                        </span>
-                        <svg class="w-4 h-4 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <summary class="flex items-center justify-between cursor-pointer text-txt-subtle hover:text-txt-muted select-none">
+                        <span class="text-[11px] font-sans font-medium text-txt-subtle">Thought Process</span>
+                        <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-180 text-txt-subtle shrink-0 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                         </svg>
                       </summary>
-                      <div class="thinking-body mt-2.5 pt-2.5 border-t border-dark-border text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px]"></div>
+                      <div class="thinking-body mt-2 pt-2 border-t border-dark-border/40 text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px] break-words overflow-x-auto"></div>
                     </details>
                   </div>
                 `;
@@ -1449,7 +1639,10 @@
               showNotification('LLM did not return structured blocks; displayed in normal mode.', 'info');
             }
             if (isNewSession || threadChanged) {
-              await loadSessionsFromDB();
+              if (state.activeProjectId) {
+                await loadProjectSessions(state.activeProjectId);
+                renderProjects();
+              }
             }
           } else if (event === 'error') {
             showError(data.message || 'Stream processing failed');
@@ -1504,38 +1697,311 @@
       el.sendBtn.disabled = el.messageInput.value.trim().length === 0 || state.isStreaming;
     });
 
-    el.newChatBtn.addEventListener('click', startNewChat);
-    el.clearAllBtn.addEventListener('click', clearAllSessions);
-    el.blocksToggleBtn?.addEventListener('click', () => {
-      state.enableBlocks = !state.enableBlocks;
-      localStorage.setItem('qa-enable-blocks', state.enableBlocks);
-      updateBlocksToggleUI();
+    el.expandAllBtn?.addEventListener('click', expandAllProjects);
+    el.collapseAllBtn?.addEventListener('click', collapseAllProjects);
+
+    el.addProjectBtn?.addEventListener('click', () => {
+      el.addProjectForm?.classList.toggle('hidden');
+      if (!el.addProjectForm?.classList.contains('hidden')) {
+        el.newProjectPathInput?.focus();
+      }
     });
+
+    el.cancelAddProjectBtn?.addEventListener('click', () => {
+      el.addProjectForm?.classList.add('hidden');
+      if (el.newProjectPathInput) el.newProjectPathInput.value = '';
+      if (el.newProjectNameInput) el.newProjectNameInput.value = '';
+    });
+
+    const handleAddProjectSubmit = async () => {
+      const path = el.newProjectPathInput?.value;
+      const name = el.newProjectNameInput?.value;
+      const success = await addNewProject(name, path);
+      if (success) {
+        el.addProjectForm?.classList.add('hidden');
+        if (el.newProjectPathInput) el.newProjectPathInput.value = '';
+        if (el.newProjectNameInput) el.newProjectNameInput.value = '';
+      }
+    };
+
+    el.submitAddProjectBtn?.addEventListener('click', handleAddProjectSubmit);
+    el.newProjectPathInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleAddProjectSubmit();
+    });
+    el.newProjectNameInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleAddProjectSubmit();
+    });
+
+    el.settingsBtn?.addEventListener('click', showSettingsModal);
     el.modeNormalBtn?.addEventListener('click', () => setMode('normal'));
     el.modeBlocksBtn?.addEventListener('click', () => setMode('blocks'));
-    el.toolsPanelToggleBtn?.addEventListener('click', () => {
-      el.toolsPanel?.classList.toggle('hidden');
-    });
-    el.toolsPanelCloseBtn?.addEventListener('click', () => {
-      el.toolsPanel?.classList.add('hidden');
-    });
 
-    el.workspaceSetBtn?.addEventListener('click', () => {
-      const workspace = el.workspaceInput?.value?.trim();
-      if (workspace) {
-        setWorkspace(workspace);
-      }
-    });
+    // ============== Settings Modal ==============
+    function showSettingsModal() {
+      const existing = document.getElementById('settings-modal');
+      if (existing) existing.remove();
 
-    el.workspaceInput?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const workspace = el.workspaceInput.value.trim();
-        if (workspace) {
-          e.preventDefault();
-          setWorkspace(workspace);
+      const modal = document.createElement('div');
+      modal.id = 'settings-modal';
+      modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-msg p-4';
+      
+      const currentSources = state.settingSources ? (state.settingSources.includes('user') ? 'user' : (state.settingSources.includes('local') ? 'local' : 'default')) : 'default';
+      const currentPerm = state.permissionMode || 'default';
+      const currentSkillsMode = state.skillsMode || 'default';
+
+      modal.innerHTML = `
+        <div class="bg-dark-surface border border-dark-border rounded-2xl p-5 w-full max-w-lg shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+          <!-- Header -->
+          <div class="flex items-center justify-between pb-3 border-b border-dark-border/60">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+              </svg>
+              <h3 class="font-medium text-sm text-white">Agent & Session Settings</h3>
+            </div>
+            <button id="close-settings-btn" class="text-txt-subtle hover:text-white p-1 rounded-lg hover:bg-dark-elevated transition-colors text-base leading-none">&times;</button>
+          </div>
+
+          <div class="space-y-3.5 py-1">
+            
+            <!-- 1. Permission Mode -->
+            <div class="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-xs font-medium text-white">Permission Mode</div>
+                  <div class="text-[11px] text-txt-subtle">Controls what the agent is allowed to do</div>
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[11px] font-medium">
+                <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'default' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="default">Default</button>
+                <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'plan' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="plan">Read-Only</button>
+                <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'bypassPermissions' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="bypassPermissions">Full Access</button>
+              </div>
+              <div id="perm-desc" class="text-[10px] text-txt-subtle font-mono"></div>
+            </div>
+
+            <!-- 2. Settings Sources -->
+            <div class="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-xs font-medium text-white">Settings Sources</div>
+                  <div class="text-[11px] text-txt-subtle">Choose which Claude config files to load</div>
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[11px] font-medium">
+                <button type="button" class="source-option py-1 rounded transition-colors text-center ${currentSources === 'default' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="default">Default (All)</button>
+                <button type="button" class="source-option py-1 rounded transition-colors text-center ${currentSources === 'user' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="user">User (~/.claude)</button>
+                <button type="button" class="source-option py-1 rounded transition-colors text-center ${currentSources === 'local' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="local">Local (.claude)</button>
+              </div>
+              <div id="source-desc" class="text-[10px] text-txt-subtle font-mono"></div>
+            </div>
+
+            <!-- 3. Skills Configurations -->
+            <div class="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-xs font-medium text-white">Skills Configuration</div>
+                  <div class="text-[11px] text-txt-subtle">Controls which skills are available in the session</div>
+                </div>
+              </div>
+              <div class="grid grid-cols-4 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[10px] sm:text-[11px] font-medium">
+                <button type="button" class="skills-mode-btn py-1 rounded transition-colors text-center ${currentSkillsMode === 'default' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-mode="default">Default</button>
+                <button type="button" class="skills-mode-btn py-1 rounded transition-colors text-center ${currentSkillsMode === 'all' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-mode="all">All Skills</button>
+                <button type="button" class="skills-mode-btn py-1 rounded transition-colors text-center ${currentSkillsMode === 'none' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-mode="none">No Skills</button>
+                <button type="button" class="skills-mode-btn py-1 rounded transition-colors text-center ${currentSkillsMode === 'custom' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-mode="custom">Custom</button>
+              </div>
+
+              <!-- Custom Skills Tag Input Container (shown when mode === 'custom') -->
+              <div id="custom-skills-container" class="space-y-2 pt-1 ${currentSkillsMode === 'custom' ? '' : 'hidden'}">
+                <div class="flex items-center gap-1.5">
+                  <input id="new-skill-input" type="text" placeholder="e.g. writing-plans, agent-reach..." class="flex-1 bg-dark-bg border border-dark-border rounded-lg px-2.5 py-1 text-xs text-white placeholder-txt-subtle focus:outline-none focus:border-brand/60 font-mono" />
+                  <button id="add-skill-btn" type="button" class="px-2.5 py-1 bg-brand hover:bg-brand-hover text-white rounded-lg text-xs font-medium transition-colors">Add</button>
+                </div>
+                <div id="skills-tags-list" class="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 bg-dark-bg/60 rounded-lg border border-dark-border/40 min-h-[32px]"></div>
+              </div>
+              <div id="skills-desc" class="text-[10px] text-txt-subtle font-mono"></div>
+            </div>
+
+            <!-- 4. Blocks Mode Toggle -->
+            <div class="flex items-center justify-between p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60">
+              <div class="space-y-0.5 pr-4">
+                <div class="text-xs font-medium text-white">Blocks Mode by Default</div>
+                <div class="text-[11px] text-txt-subtle leading-relaxed">Request structured explanation cards with audio walkthrough for new responses.</div>
+              </div>
+              <button id="modal-blocks-toggle" type="button" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${state.enableBlocks ? 'bg-brand' : 'bg-dark-border'}">
+                <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${state.enableBlocks ? 'translate-x-4' : 'translate-x-0'}"></span>
+              </button>
+            </div>
+
+          </div>
+
+          <div class="pt-2 flex justify-end">
+            <button id="done-settings-btn" class="px-4 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-white text-xs font-medium transition-colors shadow-sm">Done</button>
+          </div>
+        </div>
+      `;
+
+      modal.querySelector('#close-settings-btn')?.addEventListener('click', () => modal.remove());
+      modal.querySelector('#done-settings-btn')?.addEventListener('click', () => modal.remove());
+      modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+      // Permission Mode logic
+      const permDescEl = modal.querySelector('#perm-desc');
+      const updatePermDesc = () => {
+        const val = state.permissionMode;
+        if (!val) permDescEl.textContent = 'null (SDK Default: Standard tool permission checks)';
+        else if (val === 'plan') permDescEl.textContent = '"plan" (Read-only: Read, Glob, Grep only)';
+        else if (val === 'bypassPermissions') permDescEl.textContent = '"bypassPermissions" (Full Access: All tool checks bypassed)';
+      };
+      updatePermDesc();
+
+      modal.querySelectorAll('.perm-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.val;
+          state.permissionMode = val === 'default' ? null : val;
+          if (state.permissionMode) {
+            localStorage.setItem('qa-permission-mode', state.permissionMode);
+          } else {
+            localStorage.removeItem('qa-permission-mode');
+          }
+          modal.querySelectorAll('.perm-option').forEach(b => {
+            b.className = `perm-option py-1 rounded transition-colors text-center ${b.dataset.val === (state.permissionMode || 'default') ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}`;
+          });
+          updatePermDesc();
+        });
+      });
+
+      // Settings Sources logic
+      const sourceDescEl = modal.querySelector('#source-desc');
+      const updateSourceDesc = () => {
+        const s = state.settingSources;
+        if (!s) sourceDescEl.textContent = 'null (Loads user + project + local settings — SDK default)';
+        else if (s.includes('user')) sourceDescEl.textContent = '["user"] (Only load ~/.claude/settings.json)';
+        else if (s.includes('local')) sourceDescEl.textContent = '["local"] (Only load .claude/settings.local.json)';
+      };
+      updateSourceDesc();
+
+      modal.querySelectorAll('.source-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.val;
+          if (val === 'default') {
+            state.settingSources = null;
+            localStorage.removeItem('qa-setting-sources');
+          } else if (val === 'user') {
+            state.settingSources = ['user'];
+            localStorage.setItem('qa-setting-sources', 'user');
+          } else if (val === 'local') {
+            state.settingSources = ['local'];
+            localStorage.setItem('qa-setting-sources', 'local');
+          }
+          const curVal = state.settingSources ? (state.settingSources.includes('user') ? 'user' : 'local') : 'default';
+          modal.querySelectorAll('.source-option').forEach(b => {
+            b.className = `source-option py-1 rounded transition-colors text-center ${b.dataset.val === curVal ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}`;
+          });
+          updateSourceDesc();
+        });
+      });
+
+      // Skills Configuration logic
+      const skillsContainer = modal.querySelector('#custom-skills-container');
+      const tagsList = modal.querySelector('#skills-tags-list');
+      const skillInput = modal.querySelector('#new-skill-input');
+      const addSkillBtn = modal.querySelector('#add-skill-btn');
+      const skillsDescEl = modal.querySelector('#skills-desc');
+
+      const renderSkillsTags = () => {
+        if (!tagsList) return;
+        tagsList.innerHTML = '';
+        const list = state.skillsList || [];
+        if (list.length === 0) {
+          tagsList.innerHTML = '<span class="text-[11px] text-txt-subtle italic p-1">No custom skills added (sends empty list [])</span>';
+          return;
         }
-      }
-    });
+        list.forEach((skillName, idx) => {
+          const tag = document.createElement('span');
+          tag.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-dark-surface border border-dark-border text-white text-[11px] font-mono shadow-sm';
+          tag.innerHTML = `
+            <span>${escapeHtml(skillName)}</span>
+            <button type="button" class="text-txt-subtle hover:text-red-400 font-sans ml-0.5 leading-none" data-idx="${idx}">&times;</button>
+          `;
+          tag.querySelector('button')?.addEventListener('click', () => {
+            state.skillsList.splice(idx, 1);
+            localStorage.setItem('qa-skills-list', JSON.stringify(state.skillsList));
+            renderSkillsTags();
+            updateSkillsDesc();
+          });
+          tagsList.appendChild(tag);
+        });
+      };
+
+      const updateSkillsDesc = () => {
+        if (!skillsDescEl) return;
+        const mode = state.skillsMode || 'default';
+        if (mode === 'default') skillsDescEl.textContent = 'null (SDK default: standard CLI discovery)';
+        else if (mode === 'all') skillsDescEl.textContent = '"all" (Load every skill discovered on disk)';
+        else if (mode === 'none') skillsDescEl.textContent = '[] (No skills at all: empty list)';
+        else if (mode === 'custom') {
+          const count = (state.skillsList || []).length;
+          skillsDescEl.textContent = `[${(state.skillsList || []).map(s => `"${s}"`).join(', ')}] (${count} skills enabled)`;
+        }
+      };
+
+      const addCustomSkill = () => {
+        const val = skillInput?.value.trim();
+        if (!val) return;
+        if (!state.skillsList) state.skillsList = [];
+        if (!state.skillsList.includes(val)) {
+          state.skillsList.push(val);
+          localStorage.setItem('qa-skills-list', JSON.stringify(state.skillsList));
+          renderSkillsTags();
+          updateSkillsDesc();
+        }
+        if (skillInput) skillInput.value = '';
+      };
+
+      addSkillBtn?.addEventListener('click', addCustomSkill);
+      skillInput?.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addCustomSkill();
+        }
+      });
+
+      renderSkillsTags();
+      updateSkillsDesc();
+
+      modal.querySelectorAll('.skills-mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.mode;
+          state.skillsMode = mode;
+          localStorage.setItem('qa-skills-mode', mode);
+
+          modal.querySelectorAll('.skills-mode-btn').forEach(b => {
+            b.className = `skills-mode-btn py-1 rounded transition-colors text-center ${b.dataset.mode === mode ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}`;
+          });
+
+          if (mode === 'custom') {
+            skillsContainer?.classList.remove('hidden');
+          } else {
+            skillsContainer?.classList.add('hidden');
+          }
+          updateSkillsDesc();
+        });
+      });
+
+      // Blocks toggle logic
+      const toggleBtn = modal.querySelector('#modal-blocks-toggle');
+      toggleBtn?.addEventListener('click', () => {
+        state.enableBlocks = !state.enableBlocks;
+        localStorage.setItem('qa-enable-blocks', state.enableBlocks);
+        toggleBtn.className = `relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${state.enableBlocks ? 'bg-brand' : 'bg-dark-border'}`;
+        const span = toggleBtn.querySelector('span');
+        if (span) span.className = `pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${state.enableBlocks ? 'translate-x-4' : 'translate-x-0'}`;
+      });
+
+      document.body.appendChild(modal);
+    }
 
     // ============== Context Usage ==============
     function updateContextBar(ctx) {
@@ -1612,7 +2078,13 @@
     }
 
     el.menuToggle?.addEventListener('click', () => {
-      el.sidebar.classList.toggle('-translate-x-full');
+      el.sidebar?.classList.toggle('-translate-x-full');
+      el.sidebarBackdrop?.classList.toggle('hidden');
+    });
+
+    el.sidebarBackdrop?.addEventListener('click', () => {
+      el.sidebar?.classList.add('-translate-x-full');
+      el.sidebarBackdrop?.classList.add('hidden');
     });
 
     document.querySelectorAll('.prompt-chip').forEach(chip => {
@@ -1624,10 +2096,7 @@
 
     // ============== Initialize ==============
     async function init() {
-      checkHealth();
-      updateBlocksToggleUI();
-      await loadWorkspace();
-      await loadSessionsFromDB();
+      await loadProjects();
 
       if (state.currentThreadId) {
         await selectSession(state.currentThreadId);
