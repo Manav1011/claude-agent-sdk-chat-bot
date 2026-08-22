@@ -151,8 +151,17 @@ def _read_sdk_history(workspace: str, session_id: str) -> list[dict]:
     return messages
 
 
-def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[dict], list[dict]]:
+def _read_sdk_history_and_blocks(
+    workspace: str,
+    session_id: str,
+    start_offset: int = 0,
+    limit: int | None = None,
+) -> tuple[list[dict], list[dict], int | None]:
     """Read conversation history and enriched blocks from SDK JSONL file.
+
+    Supports cursor-based pagination: start_offset is a byte position to seek to,
+    and limit is the number of logical messages per page. Returns next_cursor
+    (byte offset after the last line read) or None if EOF.
 
     SDK stores structured output as:
       {type: "assistant", message: {content: [{type: "tool_use", name: "StructuredOutput", input: {blocks: [...]}}]}}
@@ -160,19 +169,23 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
     project_key = _sdk_project_key(workspace)
     jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
     if not jsonl_path.exists():
-        return [], []
+        return [], [], None
 
     messages = []
     enriched_blocks = []
-    pending_tool_calls = {}  # assistant_uuid -> {name, input}
+    pending_tool_calls: dict[str, dict] = {}  # assistant_uuid -> {name, input}
 
-    with open(jsonl_path) as f:
+    msg_count = 0
+    next_byte_offset: int | None = None
+
+    with open(jsonl_path, "rb") as f:
+        f.seek(start_offset)
         for line in f:
-            line = line.strip()
-            if not line:
+            line_text = line.decode("utf-8", errors="replace").strip()
+            if not line_text:
                 continue
             try:
-                entry = json.loads(line)
+                entry = json.loads(line_text)
             except Exception:
                 continue
 
@@ -180,18 +193,18 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
 
             if entry_type == "user":
                 msg = entry.get("message", {})
-                content = msg.get("content", [])
+                msg_content = msg.get("content", [])
                 # Normalize string content to list format
-                if isinstance(content, str):
-                    content = [{"type": "text", "text": content}]
-                if isinstance(content, list):
-                    has_tool_result = any(c.get("type") == "tool_result" for c in content)
+                if isinstance(msg_content, str):
+                    msg_content = [{"type": "text", "text": msg_content}]
+                if isinstance(msg_content, list):
+                    has_tool_result = any(c.get("type") == "tool_result" for c in msg_content)
                     if has_tool_result:
-                        for block in content:
+                        for block in msg_content:
                             if block.get("type") == "tool_result":
                                 tool_result = block.get("content", "")
+                                text_parts = []
                                 if isinstance(tool_result, list):
-                                    text_parts = []
                                     for item in tool_result:
                                         if isinstance(item, dict):
                                             if item.get("type") == "text":
@@ -200,7 +213,7 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
                                                 text_parts.append("[Image Output]")
                                         elif isinstance(item, str):
                                             text_parts.append(item)
-                                    tool_result = "\n".join(text_parts) if text_parts else str(tool_result)
+                                tool_result = "\n".join(text_parts) if text_parts else str(tool_result)
                                 source_uuid = entry.get("sourceToolAssistantUUID")
                                 if source_uuid and source_uuid in pending_tool_calls:
                                     tool_call = pending_tool_calls.pop(source_uuid)
@@ -210,19 +223,21 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
                                         "input": tool_call["input"],
                                         "content": tool_result,
                                     })
+                                    msg_count += 1
                     else:
-                        texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+                        texts = [c.get("text", "") for c in msg_content if c.get("type") == "text"]
                         human_text = "".join(texts)
                         if human_text and not human_text.startswith("[structured-output-enforce]") and not human_text.startswith("Stop hook feedback:"):
                             messages.append({"type": "human", "content": human_text})
+                            msg_count += 1
 
             elif entry_type == "assistant":
                 msg = entry.get("message", {})
-                content = msg.get("content", [])
-                if isinstance(content, list):
+                msg_content = msg.get("content", [])
+                if isinstance(msg_content, list):
                     texts = []
                     thinking_content = None
-                    for block in content:
+                    for block in msg_content:
                         if block.get("type") == "text":
                             texts.append(block.get("text", ""))
                         elif block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
@@ -254,17 +269,37 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
                             thinking_content = block.get("thinking", "")
                     if texts:
                         messages.append({"type": "ai", "content": "".join(texts)})
+                        msg_count += 1
                     if thinking_content:
                         messages.append({"type": "thinking", "content": thinking_content})
+                        msg_count += 1
 
-    return messages, enriched_blocks
+            # Track byte offset of next line (current position after reading this line)
+            next_byte_offset = f.tell()
+
+            # Stop after limit complete logical messages
+            if limit is not None and msg_count >= limit:
+                break
+        else:
+            next_byte_offset = None
+
+    return messages, enriched_blocks, next_byte_offset
+
+
 
 
 BLOCKS_MODE_SYSTEM_PROMPT = """When responding in blocks mode using the StructuredOutput tool:
 - Call StructuredOutput ONCE with all your content as blocks
 - Do NOT generate any text before, after, or alongside the StructuredOutput tool call
 - The StructuredOutput tool call IS your complete response — nothing else should follow
-- Do not add commentary, summaries, or follow-up text after calling the tool"""
+
+About spoken_explanation:
+- Only include spoken_explanation when the content genuinely needs explanation
+- Leave spoken_explanation EMPTY ("") for: plain headings, single words, short phrases, simple lists with obvious items, or anything self-explanatory
+- ALWAYS include spoken_explanation for: code snippets, tables, flowcharts/diagrams, complex concepts, technical terms, or anything a listener would need context to understand
+- When you DO explain, be substantive: use real examples, analogies, or concrete use-cases. Do NOT just rephrase the markdown as a sentence. An explanation should add information the markdown itself does not convey
+- Example of a BAD explanation: "This is a table showing the four main types of machine learning" — it merely names what is already visible
+- Example of a GOOD explanation: 'Supervised learning is like teaching with flashcards — you know the right answer for each card. It is used in spam filters that learn from thousands of labeled emails to predict whether new ones are junk.'"""
 
 def _build_options(
     workspace: str,
@@ -338,6 +373,7 @@ class MessagesResponse(BaseModel):
     session_id: str
     messages: list[dict]
     enriched_blocks: list[dict] | None = None
+    next_cursor: int | None = None
 
 
 # ============== Routes ==============
@@ -412,21 +448,33 @@ async def list_sessions(project_id: int | None = None):
 
 
 @app.get("/api/sessions/{session_id}/messages", response_model=MessagesResponse)
-async def get_session_messages(session_id: str, project_id: int | None = None):
+async def get_session_messages(
+    session_id: str,
+    project_id: int | None = None,
+    cursor: int | None = None,
+    limit: int | None = None,
+):
+    """Read conversation history from SDK JSONL file with cursor-based pagination.
+
+    - cursor: byte offset to resume from (from previous response's next_cursor)
+    - limit: number of logical messages per page (default: unlimited)
+    """
     # Validate — SDK session_id must be UUID; if invalid, return empty history
     try:
         uuid.UUID(session_id)
     except ValueError:
         return MessagesResponse(session_id=session_id, messages=[], enriched_blocks=None)
-    """Read conversation history from SDK JSONL file."""
-    ws = _resolve_workspace(project_id)
 
-    messages, enriched_blocks = _read_sdk_history_and_blocks(ws, session_id)
+    ws = _resolve_workspace(project_id)
+    messages, enriched_blocks, next_cursor = _read_sdk_history_and_blocks(
+        ws, session_id, start_offset=cursor or 0, limit=limit
+    )
 
     return MessagesResponse(
         session_id=session_id,
         messages=messages,
         enriched_blocks=enriched_blocks if enriched_blocks else None,
+        next_cursor=next_cursor,
     )
 
 

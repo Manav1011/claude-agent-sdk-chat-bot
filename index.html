@@ -303,7 +303,7 @@
       </header>
 
       <!-- Chat Messages Scroll Container -->
-      <div id="messages-container" class="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5 space-y-4 w-full min-w-0">
+      <div id="messages-container" class="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5 pb-32 sm:pb-36 space-y-4 w-full min-w-0">
         
         <!-- Empty State -->
         <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center my-auto py-10 w-full max-w-3xl lg:max-w-4xl mx-auto">
@@ -333,27 +333,26 @@
       </div>
 
       <!-- Floating Input Container -->
-      <div class="px-3 pb-3 pt-1 sm:px-4 sm:pb-4 w-full max-w-2xl lg:max-w-3xl mx-auto shrink-0 min-w-0">
-        <div class="relative rounded-xl bg-dark-surface/95 backdrop-blur-xl border border-dark-border focus-within:border-brand/60 shadow-lg transition-all duration-150 px-3 py-2">
-          
-          <textarea
-            id="message-input"
-            rows="1"
-            placeholder="Type a message or prompt..."
-            class="w-full bg-transparent px-0.5 py-0.5 text-xs sm:text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-32 font-sans leading-relaxed block overflow-y-auto min-h-[22px]"
-          ></textarea>
+      <div class="absolute bottom-0 left-0 right-0 z-20 pointer-events-none bg-gradient-to-t from-dark-bg via-dark-bg/85 to-transparent pt-8 pb-3 px-3 sm:pb-4 sm:px-4">
+        <div class="w-full max-w-2xl lg:max-w-3xl mx-auto min-w-0">
+          <div class="pointer-events-auto relative rounded-xl bg-dark-surface/95 backdrop-blur-xl border border-dark-border focus-within:border-brand/60 shadow-2xl transition-all duration-150 px-3 py-2">
+            
+            <textarea
+              id="message-input"
+              rows="1"
+              placeholder="Type a message or prompt..."
+              class="w-full bg-transparent px-0.5 py-0.5 text-xs sm:text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-32 font-sans leading-relaxed block overflow-y-auto min-h-[22px]"
+            ></textarea>
 
-          <div class="flex items-center justify-between pt-1.5 mt-0.5 text-[11px] text-txt-subtle">
-            <span class="text-[10px] text-txt-subtle font-mono">Shift + Enter for new line</span>
-
-            <div class="flex items-center gap-2">
-              <!-- Context usage progress bar -->
+            <div class="flex items-center justify-between pt-1 mt-0.5 text-[11px] text-txt-subtle">
+              <!-- Left side: Context usage progress bar -->
               <div id="context-usage-bar" class="hidden items-center gap-1.5 cursor-pointer font-mono text-[11px] select-none text-brand hover:brightness-110 transition-all" onclick="showContextModal()" title="View context breakdown">
                 <span class="text-brand font-bold">[</span>
                 <span id="context-usage-blocks" class="tracking-tight inline-flex leading-none"></span>
                 <span class="text-brand font-bold">]</span>
                 <span id="context-usage-label" class="text-[10px] font-mono text-brand font-medium">0%</span>
               </div>
+              <div class="flex-1"></div>
 
               <button
                 id="send-btn"
@@ -366,8 +365,8 @@
                 </svg>
               </button>
             </div>
-          </div>
 
+          </div>
         </div>
       </div>
 
@@ -409,6 +408,8 @@
       loadingProjects: new Set(),
       messages: {},
       blocks: {},
+      sessionCursors: {},
+      isLoadingOlder: {},
       currentMode: 'normal',
       enableBlocks: localStorage.getItem('qa-enable-blocks') === 'true',
       settingSources: getInitialSettingSources(),
@@ -974,8 +975,11 @@
     function clearToolCalls() {}
 
     // ============== Blocks Audio Walkthrough Player ==============
+    let currentSpeechId = 0;
+
     const audioPlayer = {
       isPlaying: false,
+      mode: null, // 'all' | 'single'
       groupId: null,
       currentIndex: 0,
       rate: 1.0,
@@ -1007,11 +1011,14 @@
     }
 
     function stopBlocksAudio() {
+      currentSpeechId++;
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
       audioPlayer.isPlaying = false;
+      audioPlayer.mode = null;
       audioPlayer.groupId = null;
+
       document.querySelectorAll('.block-card-container').forEach(card => {
         card.classList.remove('ring-2', 'ring-brand', 'border-brand', 'shadow-glow');
         const playBtn = card.querySelector('.block-play-btn');
@@ -1033,12 +1040,11 @@
 
         if (speedBtn) speedBtn.textContent = `${audioPlayer.rate}x`;
 
-        if (audioPlayer.isPlaying && audioPlayer.groupId === barGroupId) {
+        if (audioPlayer.isPlaying && audioPlayer.mode === 'all' && audioPlayer.groupId === barGroupId) {
           if (playIcon) playIcon.innerHTML = `<path stroke="currentColor" stroke-width="2.5" stroke-linecap="round" d="M10 6v12M14 6v12"/>`;
           if (playLabel) playLabel.textContent = 'Pause';
           if (statusText) {
-            const curSeq = audioPlayer.blocks[audioPlayer.currentIndex]?.sequence_id ?? (audioPlayer.currentIndex + 1);
-            statusText.innerHTML = `· <span class="text-brand font-medium">Playing ${curSeq}/${audioPlayer.blocks.length}</span>`;
+            statusText.innerHTML = `· <span class="text-brand font-medium">Playing ${audioPlayer.currentIndex + 1}/${audioPlayer.blocks.length}</span>`;
           }
         } else {
           if (playIcon) playIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
@@ -1048,25 +1054,11 @@
       });
     }
 
-    function playBlockAtIndex(index, blocks, threadId, groupId = 0) {
-      if (!('speechSynthesis' in window) || !blocks || blocks.length === 0) return;
-      if (index < 0 || index >= blocks.length) {
-        stopBlocksAudio();
-        return;
-      }
-
-      window.speechSynthesis.cancel();
-      audioPlayer.blocks = blocks;
-      audioPlayer.threadId = threadId;
-      audioPlayer.groupId = groupId;
-      audioPlayer.currentIndex = index;
-      audioPlayer.isPlaying = true;
-
-      // Update block highlights
+    function updateBlockCardsHighlight(activeGroupId, activeIndex) {
       document.querySelectorAll('.block-card-container').forEach(card => {
         const cardGroupId = parseInt(card.dataset.groupId, 10);
         const cardIndex = parseInt(card.dataset.blockIdx, 10);
-        const isCurrent = cardGroupId === groupId && cardIndex === index;
+        const isCurrent = audioPlayer.isPlaying && cardGroupId === activeGroupId && cardIndex === activeIndex;
 
         card.classList.toggle('ring-2', isCurrent);
         card.classList.toggle('ring-brand', isCurrent);
@@ -1088,24 +1080,88 @@
           card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
       });
+    }
 
+    function playSingleBlock(block, threadId, index, groupId = 0) {
+      if (!('speechSynthesis' in window) || !block || !block.spoken_explanation || !block.spoken_explanation.trim()) return;
+
+      // If already playing this exact block, toggle pause/stop
+      if (audioPlayer.isPlaying && audioPlayer.groupId === groupId && audioPlayer.currentIndex === index) {
+        stopBlocksAudio();
+        return;
+      }
+
+      currentSpeechId++;
+      const speechId = currentSpeechId;
+      window.speechSynthesis.cancel();
+
+      audioPlayer.isPlaying = true;
+      audioPlayer.mode = 'single';
+      audioPlayer.groupId = groupId;
+      audioPlayer.currentIndex = index;
+      audioPlayer.threadId = threadId;
+      audioPlayer.blocks = [block];
+
+      updateBlockCardsHighlight(groupId, index);
       updateAllAudioPlayerBarsUI();
 
-      const block = blocks[index];
-      const textToSpeak = block.spoken_explanation || block.markdown || '';
+      const textToSpeak = block.spoken_explanation.trim();
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
       utterance.rate = audioPlayer.rate;
 
       utterance.onend = () => {
-        if (!audioPlayer.isPlaying || audioPlayer.groupId !== groupId) return;
+        if (speechId !== currentSpeechId) return;
+        stopBlocksAudio();
+      };
+
+      utterance.onerror = (e) => {
+        if (speechId !== currentSpeechId) return;
+        if (e.error === 'canceled' || e.error === 'interrupted') return;
+        stopBlocksAudio();
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function playWalkthroughBlock(index, blocks, threadId, groupId = 0) {
+      if (!('speechSynthesis' in window) || !blocks || blocks.length === 0) return;
+      if (index < 0 || index >= blocks.length) {
+        stopBlocksAudio();
+        return;
+      }
+
+      currentSpeechId++;
+      const speechId = currentSpeechId;
+      window.speechSynthesis.cancel();
+
+      audioPlayer.isPlaying = true;
+      audioPlayer.mode = 'all';
+      audioPlayer.blocks = blocks;
+      audioPlayer.threadId = threadId;
+      audioPlayer.groupId = groupId;
+      audioPlayer.currentIndex = index;
+
+      updateBlockCardsHighlight(groupId, index);
+      updateAllAudioPlayerBarsUI();
+
+      const block = blocks[index];
+      const textToSpeak = (block.spoken_explanation && block.spoken_explanation.trim()) ? block.spoken_explanation.trim() : (block.markdown || '');
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      utterance.rate = audioPlayer.rate;
+
+      utterance.onend = () => {
+        if (speechId !== currentSpeechId) return;
+        if (!audioPlayer.isPlaying || audioPlayer.mode !== 'all' || audioPlayer.groupId !== groupId) return;
         if (index + 1 < blocks.length) {
-          playBlockAtIndex(index + 1, blocks, threadId, groupId);
+          playWalkthroughBlock(index + 1, blocks, threadId, groupId);
         } else {
           stopBlocksAudio();
         }
       };
 
-      utterance.onerror = () => {
+      utterance.onerror = (e) => {
+        if (speechId !== currentSpeechId) return;
+        if (e.error === 'canceled' || e.error === 'interrupted') return;
         stopBlocksAudio();
       };
 
@@ -1114,6 +1170,9 @@
 
     function renderTurnAudioBar(turnBlocks, threadId, groupId = 0) {
       if (!turnBlocks || turnBlocks.length === 0) return;
+      const audioSectionsCount = turnBlocks.filter(b => b.spoken_explanation && b.spoken_explanation.trim().length > 0).length;
+      if (audioSectionsCount === 0) return;
+
       const bar = document.createElement('div');
       bar.className = 'turn-audio-player animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto bg-dark-surface border border-dark-border hover:border-brand/40 rounded-xl px-3 py-2 mb-4 flex items-center justify-between gap-2 text-xs transition-colors';
       bar.dataset.groupId = groupId;
@@ -1149,32 +1208,37 @@
       `;
 
       bar.querySelector('.turn-play-btn')?.addEventListener('click', () => {
-        if (audioPlayer.isPlaying && audioPlayer.groupId === groupId) {
+        if (audioPlayer.isPlaying && audioPlayer.mode === 'all' && audioPlayer.groupId === groupId) {
           stopBlocksAudio();
         } else {
-          playBlockAtIndex(audioPlayer.groupId === groupId ? audioPlayer.currentIndex : 0, turnBlocks, threadId, groupId);
+          const startIndex = (audioPlayer.groupId === groupId && typeof audioPlayer.currentIndex === 'number' && audioPlayer.currentIndex >= 0 && audioPlayer.currentIndex < turnBlocks.length) ? audioPlayer.currentIndex : 0;
+          playWalkthroughBlock(startIndex, turnBlocks, threadId, groupId);
         }
       });
 
       bar.querySelector('.turn-prev-btn')?.addEventListener('click', () => {
-        const cur = audioPlayer.groupId === groupId ? audioPlayer.currentIndex : 0;
+        const cur = (audioPlayer.groupId === groupId && typeof audioPlayer.currentIndex === 'number') ? audioPlayer.currentIndex : 0;
         const prevIdx = Math.max(0, cur - 1);
-        playBlockAtIndex(prevIdx, turnBlocks, threadId, groupId);
+        playWalkthroughBlock(prevIdx, turnBlocks, threadId, groupId);
       });
 
       bar.querySelector('.turn-next-btn')?.addEventListener('click', () => {
-        const cur = audioPlayer.groupId === groupId ? audioPlayer.currentIndex : -1;
+        const cur = (audioPlayer.groupId === groupId && typeof audioPlayer.currentIndex === 'number') ? audioPlayer.currentIndex : 0;
         const nextIdx = Math.min(turnBlocks.length - 1, cur + 1);
-        playBlockAtIndex(nextIdx, turnBlocks, threadId, groupId);
+        playWalkthroughBlock(nextIdx, turnBlocks, threadId, groupId);
       });
 
-      bar.querySelector('.turn-speed-btn')?.addEventListener('click', (e) => {
+      bar.querySelector('.turn-speed-btn')?.addEventListener('click', () => {
         const speeds = [1.0, 1.25, 1.5, 2.0];
         const nextSpeed = speeds[(speeds.indexOf(audioPlayer.rate) + 1) % speeds.length];
         audioPlayer.rate = nextSpeed;
         updateAllAudioPlayerBarsUI();
         if (audioPlayer.isPlaying && audioPlayer.groupId === groupId) {
-          playBlockAtIndex(audioPlayer.currentIndex, turnBlocks, threadId, groupId);
+          if (audioPlayer.mode === 'all') {
+            playWalkthroughBlock(audioPlayer.currentIndex, turnBlocks, threadId, groupId);
+          } else if (audioPlayer.mode === 'single' && turnBlocks[audioPlayer.currentIndex]) {
+            playSingleBlock(turnBlocks[audioPlayer.currentIndex], threadId, audioPlayer.currentIndex, groupId);
+          }
         }
       });
 
@@ -1192,42 +1256,47 @@
         wrapper.dataset.blockUuid = block.uuid;
       }
 
-      const seqId = block.sequence_id !== undefined ? block.sequence_id : (index + 1);
+      const hasSpokenExplanation = Boolean(block.spoken_explanation && block.spoken_explanation.trim().length > 0);
       const markdownContent = block.markdown ? marked.parse(block.markdown) : '<p class="text-txt-subtle italic">No content</p>';
-      const spokenText = block.spoken_explanation || 'No spoken explanation provided.';
+      const spokenText = hasSpokenExplanation ? block.spoken_explanation.trim() : '';
+
+      const headerHtml = hasSpokenExplanation ? `
+        <div class="flex items-center justify-end pb-2 mb-2 border-b border-dark-border/40">
+          <button type="button" class="block-play-btn flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2 py-0.5 rounded border border-brand/20 transition-colors" data-block-idx="${index}" data-group-id="${groupId}">
+            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <span>Listen</span>
+          </button>
+        </div>
+      ` : '';
+
+      const detailsHtml = hasSpokenExplanation ? `
+        <details class="group mt-2 pt-2 border-t border-dark-border/40">
+          <summary class="flex items-center justify-between cursor-pointer text-xs text-txt-subtle hover:text-brand transition-colors select-none">
+            <span>Read Aloud Script</span>
+            <svg class="w-3 h-3 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </summary>
+          <div class="text-sm text-txt-muted mt-2 pt-2 border-t border-dark-border/40 flex flex-col gap-2">
+            <div class="leading-relaxed text-xs">${escapeHtml(spokenText)}</div>
+          </div>
+        </details>
+      ` : '';
 
       wrapper.innerHTML = `
         <div class="block-card-container w-full bg-dark-surface border border-dark-border rounded-xl px-4 py-3 shadow-sm transition-all duration-300" data-group-id="${groupId}" data-block-idx="${index}">
-          <div class="flex items-center justify-between pb-2 mb-2 border-b border-dark-border/40">
-            <span class="text-[11px] font-mono text-txt-subtle font-medium">Block ${seqId}</span>
-            <button type="button" class="block-play-btn flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover bg-brand/10 hover:bg-brand/20 px-2 py-0.5 rounded border border-brand/20 transition-colors" data-block-idx="${index}" data-group-id="${groupId}">
-              <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-              <span>Listen</span>
-            </button>
-          </div>
-          <div class="prose-dark mb-3">
+          ${headerHtml}
+          <div class="prose-dark mb-1">
             ${markdownContent}
           </div>
-          <details class="group mt-2 pt-2 border-t border-dark-border/40">
-            <summary class="flex items-center justify-between cursor-pointer text-xs text-txt-subtle hover:text-brand transition-colors select-none">
-              <span>Read Aloud Script</span>
-              <svg class="w-3 h-3 transition-transform group-open:rotate-180 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-              </svg>
-            </summary>
-            <div class="text-sm text-txt-muted mt-2 pt-2 border-t border-dark-border/40 flex flex-col gap-2">
-              <div class="leading-relaxed text-xs">${escapeHtml(spokenText)}</div>
-            </div>
-          </details>
+          ${detailsHtml}
         </div>
       `;
 
       const playBtn = wrapper.querySelector('.block-play-btn');
-      if (playBtn && 'speechSynthesis' in window) {
+      if (playBtn && hasSpokenExplanation && 'speechSynthesis' in window) {
         playBtn.addEventListener('click', () => {
-          const groups = getBlockGroups(state.blocks[threadId] || [block]);
-          const turnBlocks = groups[groupId] || [block];
-          playBlockAtIndex(index, turnBlocks, threadId, groupId);
+          playSingleBlock(block, threadId, index, groupId);
         });
       }
 
@@ -1408,26 +1477,81 @@
       showLoadingIndicator();
 
       try {
-        const projectParam = state.activeProjectId ? `?project_id=${state.activeProjectId}` : '';
-        const res = await fetch(`/api/sessions/${threadId}/messages${projectParam}`);
+        const projectParam = state.activeProjectId ? `&project_id=${state.activeProjectId}` : '';
+        const res = await fetch(`/api/sessions/${threadId}/messages?limit=50${projectParam}`);
         hideLoadingIndicator();
 
         if (res.ok) {
           const data = await res.json();
           state.messages[threadId] = data.messages || [];
-
-          const blocks = data.enriched_blocks || null;
-          if (blocks && Array.isArray(blocks) && blocks.length > 0) {
-            state.blocks[threadId] = blocks;
-          }
+          state.blocks[threadId] = data.enriched_blocks || [];
+          state.sessionCursors[threadId] = data.next_cursor !== undefined ? data.next_cursor : null;
 
           renderCurrentSessionView(threadId);
+          scrollToBottom();
         }
       } catch (e) {
         hideLoadingIndicator();
         showError('Failed to load session messages from server.');
       }
       updateSessionTokensWidget();
+    }
+
+    async function loadOlderMessages(threadId = state.currentThreadId) {
+      if (!threadId || state.isLoadingOlder[threadId] || !state.sessionCursors[threadId]) return;
+
+      const cursor = state.sessionCursors[threadId];
+      state.isLoadingOlder[threadId] = true;
+
+      // Show top loading indicator
+      let topLoader = document.getElementById('loading-older-messages');
+      if (!topLoader) {
+        topLoader = document.createElement('div');
+        topLoader.id = 'loading-older-messages';
+        topLoader.className = 'w-full flex items-center justify-center py-2 text-txt-subtle text-xs gap-2 shrink-0';
+        topLoader.innerHTML = `
+          <svg class="w-3.5 h-3.5 animate-spin text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span>Loading older messages...</span>
+        `;
+        el.messagesContainer.prepend(topLoader);
+      }
+
+      try {
+        const projectParam = state.activeProjectId ? `&project_id=${state.activeProjectId}` : '';
+        const res = await fetch(`/api/sessions/${threadId}/messages?limit=50&cursor=${cursor}${projectParam}`);
+
+        if (res.ok) {
+          const data = await res.json();
+          const newMessages = data.messages || [];
+          const newBlocks = data.enriched_blocks || [];
+          state.sessionCursors[threadId] = data.next_cursor !== undefined ? data.next_cursor : null;
+
+          if (newMessages.length > 0 || newBlocks.length > 0) {
+            const prevScrollHeight = el.messagesContainer.scrollHeight;
+            const prevScrollTop = el.messagesContainer.scrollTop;
+
+            state.messages[threadId] = [...newMessages, ...(state.messages[threadId] || [])];
+            if (newBlocks.length > 0) {
+              state.blocks[threadId] = [...newBlocks, ...(state.blocks[threadId] || [])];
+            }
+
+            renderCurrentSessionView(threadId);
+
+            // Restore scroll position smoothly
+            requestAnimationFrame(() => {
+              el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight - prevScrollHeight + prevScrollTop;
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load older messages:', e);
+      } finally {
+        state.isLoadingOlder[threadId] = false;
+        document.getElementById('loading-older-messages')?.remove();
+      }
     }
 
     function startNewChat() {
@@ -1682,8 +1806,16 @@
     // ============== Listeners ==============
     el.sendBtn.addEventListener('click', () => sendMessage());
 
+    function isMobileView() {
+      return window.innerWidth < 768 || window.matchMedia('(pointer: coarse)').matches || ('ontouchstart' in window);
+    }
+
     el.messageInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
+        // On phone/mobile, Enter inserts a new line; only tapping the Send button sends the message
+        if (isMobileView()) {
+          return;
+        }
         e.preventDefault();
         sendMessage();
       }
@@ -1695,6 +1827,17 @@
       el.messageInput.style.height = Math.min(el.messageInput.scrollHeight, 192) + 'px';
 
       el.sendBtn.disabled = el.messageInput.value.trim().length === 0 || state.isStreaming;
+    });
+
+    el.messagesContainer?.addEventListener('scroll', () => {
+      if (
+        el.messagesContainer.scrollTop <= 60 &&
+        state.currentThreadId &&
+        state.sessionCursors[state.currentThreadId] &&
+        !state.isLoadingOlder[state.currentThreadId]
+      ) {
+        loadOlderMessages(state.currentThreadId);
+      }
     });
 
     el.expandAllBtn?.addEventListener('click', expandAllProjects);
