@@ -129,9 +129,72 @@ def _read_sdk_history(workspace: str, session_id: str) -> list[dict]:
     return messages
 
 
+def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[dict], list[dict]]:
+    """Read conversation history and enriched blocks from SDK JSONL file.
+
+    SDK stores structured output as:
+      {type: "assistant", message: {content: [{type: "tool_use", name: "StructuredOutput", input: {blocks: [...]}}]}}
+    """
+    project_key = _sdk_project_key(workspace)
+    jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
+    if not jsonl_path.exists():
+        return [], []
+
+    messages = []
+    enriched_blocks = []
+
+    with open(jsonl_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+
+            entry_type = entry.get("type", "")
+
+            if entry_type == "user":
+                msg = entry.get("message", {})
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    messages.append({"type": "human", "content": content})
+                elif isinstance(content, list):
+                    texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+                    if texts:
+                        messages.append({"type": "human", "content": "".join(texts)})
+
+            elif entry_type == "assistant":
+                msg = entry.get("message", {})
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    texts = []
+                    for block in content:
+                        if block.get("type") == "text":
+                            texts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
+                            input_data = block.get("input", {})
+                            raw_blocks = input_data.get("blocks", [])
+                            if raw_blocks:
+                                try:
+                                    from schemas import ContentBlock
+                                    content_blocks = [ContentBlock(**b) for b in raw_blocks]
+                                    enriched = _enrich_blocks(content_blocks)
+                                    enriched_blocks.extend([b.model_dump() for b in enriched])
+                                except Exception as e:
+                                    print(f"[WARN] Failed to parse StructuredOutput blocks: {e}")
+                        elif block.get("type") == "thinking":
+                            pass  # skip thinking
+                    if texts:
+                        messages.append({"type": "ai", "content": "".join(texts)})
+
+    return messages, enriched_blocks
+
+
 def _build_options(workspace: str, session_id: str | None = None, resume: bool = False) -> ClaudeAgentOptions:
     opts = ClaudeAgentOptions(
-        model="ornith-1.0",
+        model="Minimax-M2.7",
         env={
             "ANTHROPIC_API_KEY": LLM_API_KEY,
             "ANTHROPIC_BASE_URL": LLM_BASE_URL,
