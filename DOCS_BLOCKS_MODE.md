@@ -65,23 +65,13 @@ class EnrichedContentBlock(BaseModel):
 
 ## Persistence
 
-Blocks are stored in the `enriched_blocks` table:
+Blocks are stored in SDK JSONL files automatically. The SDK writes all structured output as `tool_use` entries with `name: "StructuredOutput"` to:
 
-```sql
-CREATE TABLE enriched_blocks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    thread_id TEXT NOT NULL,
-    message_index INTEGER NOT NULL,
-    blocks_json TEXT NOT NULL
-);
-CREATE UNIQUE INDEX uq_enriched_blocks_thread_message
-    ON enriched_blocks (thread_id, message_index);
+```
+~/.claude/projects/<project-key>/<session-id>.jsonl
 ```
 
-- `thread_id` = SDK session UUID
-- `message_index` = 0 for first message, 1 for second, etc.
-- Blocks are stored per-message, not per-session (no overwrites)
-- `_get_enriched_blocks` returns the latest message's blocks
+The `_read_sdk_history_and_blocks()` function reads and parses these entries at query time — no separate database needed.
 
 ## Error Handling
 
@@ -89,7 +79,6 @@ CREATE UNIQUE INDEX uq_enriched_blocks_thread_message
 |-------|-----------|----------|
 | LLM returns no structured_output | `error` | `done` with `response_mode: "normal"` |
 | LLM returns malformed JSON | `error` | `done` with `response_mode: "normal"` |
-| DB write fails (after emit) | (none) | `done` with `response_mode: "blocks"` (blocks already delivered) |
 
 ## How It Works Internally
 
@@ -99,17 +88,16 @@ CREATE UNIQUE INDEX uq_enriched_blocks_thread_message
 4. Backend validates via `AgentResponse(**msg.structured_output)`
 5. Backend calls `_enrich_blocks()` which generates deterministic UUIDs
 6. Backend emits `content_block` SSE events to client
-7. Backend persists blocks to DB (non-fatal if it fails)
-8. Backend emits `done` event with `response_mode: "blocks"` and `block_count`
+7. Backend emits `done` event with `response_mode: "blocks"` and `block_count`
 
 ## Testing
 
 The test suite (`tests/test_blocks_*.py`) covers:
 - `test_blocks_core.py` — `_enrich_blocks` deterministic UUIDs
 - `test_blocks_stream.py` — SSE flow with live server
-- `test_blocks_db.py` — per-message persistence
-- `test_blocks_concurrency.py` — TOCTOU safety
+- `test_blocks_concurrency.py` — client cache safety
 - `test_blocks_tools.py` — tool event emission
+- `test_blocks_jsonl.py` — parsing blocks from SDK JSONL
 
 Run: `python -m pytest tests/test_blocks_*.py -v`
 
