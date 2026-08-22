@@ -181,9 +181,16 @@ def _read_sdk_history_and_blocks(workspace: str, session_id: str) -> tuple[list[
     return messages, enriched_blocks
 
 
-def _build_options(workspace: str, session_id: str | None = None, resume: bool = False) -> ClaudeAgentOptions:
+BLOCKS_MODE_SYSTEM_PROMPT = """When responding in blocks mode using the StructuredOutput tool:
+- Call StructuredOutput ONCE with all your content as blocks
+- Do NOT generate any text before, after, or alongside the StructuredOutput tool call
+- The StructuredOutput tool call IS your complete response — nothing else should follow
+- Do not add commentary, summaries, or follow-up text after calling the tool"""
+
+def _build_options(workspace: str, session_id: str | None = None, resume: bool = False, system_prompt: str | None = None) -> ClaudeAgentOptions:
     opts = ClaudeAgentOptions(
         model="Minimax-M2.7",
+        system_prompt=system_prompt,
         env={
             "ANTHROPIC_API_KEY": LLM_API_KEY,
             "ANTHROPIC_BASE_URL": LLM_BASE_URL,
@@ -404,7 +411,12 @@ async def chat(request: ChatRequest):
 
     async def event_stream():
         blocks_mode = request.response_mode == "blocks"
-        opts = _build_options(workspace=workspace, session_id=session_id, resume=session_exists)
+        opts = _build_options(
+            workspace=workspace,
+            session_id=session_id,
+            resume=session_exists,
+            system_prompt=BLOCKS_MODE_SYSTEM_PROMPT if blocks_mode else None,
+        )
 
         if blocks_mode:
             opts.output_format = {
@@ -414,6 +426,7 @@ async def chat(request: ChatRequest):
 
         pending_tools: dict[int, dict] = {}
         turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        blocks_emitted = False  # guard: suppress text_delta after structured output arrives
 
         try:
             # Reuse cached client for this session to enable get_context_usage()
@@ -438,7 +451,7 @@ async def chat(request: ChatRequest):
                         delta = evt.get("delta", {})
                         d_type = delta.get("type")
 
-                        if d_type == "text_delta":
+                        if d_type == "text_delta" and not blocks_emitted:
                             yield format_sse("message", {
                                 "type": "text_delta",
                                 "content": delta.get("text", ""),
@@ -494,6 +507,10 @@ async def chat(request: ChatRequest):
                                 "tool_id": tool_data["id"],
                                 "args": args_json,
                             })
+                            # In blocks mode, once StructuredOutput tool result is emitted,
+                            # suppress any subsequent text_delta (model sometimes echoes after tool)
+                            if blocks_mode and tool_data["name"] == "StructuredOutput":
+                                blocks_emitted = True
                         pending_tools.clear()
 
                 # --- ResultMessage ---
@@ -561,6 +578,7 @@ async def chat(request: ChatRequest):
                                 "markdown": block.markdown,
                                 "spoken_explanation": block.spoken_explanation,
                             })
+                        blocks_emitted = True
 
                         yield format_sse("done", {
                             "thread_id": session_id,
