@@ -410,14 +410,12 @@ async def get_session_messages(session_id: str, workspace: str | None = None):
     else:
         ws = _DEFAULT_WORKSPACE
 
-    messages = _read_sdk_history(ws, session_id)
-    enriched_blocks = await _get_enriched_blocks(session_id)
-    enriched_blocks_dict = [b.model_dump() for b in enriched_blocks] if enriched_blocks else None
+    messages, enriched_blocks = _read_sdk_history_and_blocks(ws, session_id)
 
     return MessagesResponse(
         session_id=session_id,
         messages=messages,
-        enriched_blocks=enriched_blocks_dict,
+        enriched_blocks=enriched_blocks if enriched_blocks else None,
     )
 
 
