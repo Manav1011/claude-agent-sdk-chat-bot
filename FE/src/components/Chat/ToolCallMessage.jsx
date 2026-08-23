@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { formatJson } from '../../utils/helpers';
 
-export default function ToolCallMessage({ tool }) {
+function ToolCallMessage({ tool }) {
   const toolName = tool.name || tool.tool_name || 'Tool';
   const inputObj = tool.input || tool.args || null;
   const inputCmd = inputObj?.command ? `$ ${inputObj.command}` : '';
@@ -12,7 +12,7 @@ export default function ToolCallMessage({ tool }) {
   const outputText = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput, null, 2);
 
   return (
-    <div className="animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0 my-2">
+    <div className="w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0 my-2">
       <div className="bg-dark-surface/90 hover:bg-dark-surface border border-dark-border/80 hover:border-brand/40 rounded-xl overflow-hidden shadow-sm transition-all min-w-0 max-w-full">
         <details className="group">
           <summary className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none bg-dark-elevated/40 hover:bg-dark-elevated/80 transition-colors min-w-0">
@@ -68,3 +68,5 @@ export default function ToolCallMessage({ tool }) {
     </div>
   );
 }
+
+export default memo(ToolCallMessage);

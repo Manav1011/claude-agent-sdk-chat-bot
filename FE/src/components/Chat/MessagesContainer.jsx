@@ -25,6 +25,7 @@ export default function MessagesContainer() {
     errorMessage,
     pendingPermissions,
     loadOlderMessages,
+    setPreviewModalImage,
   } = useChat();
 
   const containerRef = useRef(null);
@@ -156,7 +157,14 @@ export default function MessagesContainer() {
       {!isLoadingMessages && cleanMessages.map((msg, index) => {
         const key = `msg-${index}-${msg.type}`;
         if (msg.type === 'human') {
-          return <HumanMessage key={key} content={msg.content} />;
+          return (
+            <HumanMessage
+              key={key}
+              content={msg.content}
+              images={msg.images}
+              onPreviewImage={setPreviewModalImage}
+            />
+          );
         }
         if (msg.type === 'ai') {
           return (

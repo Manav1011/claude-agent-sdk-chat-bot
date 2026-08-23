@@ -7,6 +7,7 @@ import MessagesContainer from './components/Chat/MessagesContainer';
 import ChatInput from './components/Input/ChatInput';
 import SettingsModal from './components/Modals/SettingsModal';
 import ContextModal from './components/Modals/ContextModal';
+import ImageLightboxModal from './components/Modals/ImageLightboxModal';
 import NotificationToast from './components/Notifications/NotificationToast';
 
 function AppContent() {
@@ -21,6 +22,7 @@ function AppContent() {
       </main>
       <SettingsModal />
       <ContextModal />
+      <ImageLightboxModal />
       <NotificationToast />
     </div>
   );

@@ -84,6 +84,7 @@ export function ChatProvider({ children }) {
   // Modals & UI State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
+  const [previewModalImage, setPreviewModalImage] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     return typeof window !== 'undefined' ? window.innerWidth >= 1024 : true;
   });
@@ -641,9 +642,9 @@ export function ChatProvider({ children }) {
   }, [currentThreadId, stopSpeechAudio, startNewChat]);
 
   // Send Message & Stream
-  const sendMessage = useCallback(async (text) => {
+  const sendMessage = useCallback(async (text, imagePaths = [], imagePreviews = []) => {
     const cleanText = (text || '').trim();
-    if (!cleanText) return;
+    if (!cleanText && (!imagePaths || imagePaths.length === 0)) return;
 
     let sessionThreadId = currentThreadId;
     const isNewSession = !sessionThreadId;
@@ -656,18 +657,29 @@ export function ChatProvider({ children }) {
 
     if (activeStreams[sessionThreadId]?.isStreaming) return;
 
-    const userMsg = { type: 'human', content: cleanText };
+    const userImages = Array.isArray(imagePreviews) && imagePreviews.length > 0
+      ? imagePreviews
+      : (Array.isArray(imagePaths) ? imagePaths : []);
+
+    const userMsg = {
+      type: 'human',
+      content: cleanText,
+      images: userImages,
+    };
+
     setMessages(prev => ({
       ...prev,
       [sessionThreadId]: [...(prev[sessionThreadId] || []), userMsg],
     }));
+
+    const tabTitlePrompt = cleanText || (imagePaths.length > 0 ? 'Image Analysis' : 'Conversation');
 
     setOpenTabs((prev) => {
       const hasNull = prev.some((t) => t.threadId === null);
       if (hasNull) {
         return prev.map((t) =>
           t.threadId === null
-            ? { ...t, threadId: sessionThreadId, title: cleanText.slice(0, 32), projectId: activeProjectId }
+            ? { ...t, threadId: sessionThreadId, title: tabTitlePrompt.slice(0, 32), projectId: activeProjectId }
             : t
         );
       }
@@ -675,7 +687,7 @@ export function ChatProvider({ children }) {
       if (!exists) {
         return [
           ...prev,
-          { threadId: sessionThreadId, projectId: activeProjectId, title: cleanText.slice(0, 32) },
+          { threadId: sessionThreadId, projectId: activeProjectId, title: tabTitlePrompt.slice(0, 32) },
         ];
       }
       return prev;
@@ -704,6 +716,7 @@ export function ChatProvider({ children }) {
     try {
       for await (const { event, data } of streamChatApi({
         message: cleanText,
+        imagePaths,
         threadId: sessionThreadId,
         projectId: activeProjectId,
         speechExplanation,
@@ -1004,6 +1017,8 @@ export function ChatProvider({ children }) {
     activeSpeechExplanation,
     isSettingsOpen,
     isContextModalOpen,
+    previewModalImage,
+    setPreviewModalImage,
     isSidebarOpen,
     setIsSidebarOpen,
     toggleSidebar,

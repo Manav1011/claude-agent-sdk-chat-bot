@@ -77,8 +77,25 @@ export async function submitPermissionDecision({ requestId, decision, updatedInp
   return res.json();
 }
 
+export async function uploadImagesApi(files) {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append('files', file);
+  }
+  const res = await fetch('/api/upload', {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || 'Failed to upload images');
+  }
+  return res.json();
+}
+
 export async function* streamChatApi({
   message,
+  imagePaths = [],
   threadId,
   projectId,
   speechExplanation,
@@ -100,6 +117,7 @@ export async function* streamChatApi({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       message,
+      image_paths: Array.isArray(imagePaths) && imagePaths.length > 0 ? imagePaths : null,
       thread_id: threadId,
       project_id: projectId || null,
       speech_explanation: Boolean(speechExplanation),
