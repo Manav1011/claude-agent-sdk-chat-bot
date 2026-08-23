@@ -18,9 +18,5 @@ export function formatJson(val) {
 }
 
 export function isMobileView() {
-  return (
-    window.innerWidth < 768 ||
-    window.matchMedia('(pointer: coarse)').matches ||
-    'ontouchstart' in window
-  );
+  return typeof window !== 'undefined' && window.innerWidth < 768;
 }

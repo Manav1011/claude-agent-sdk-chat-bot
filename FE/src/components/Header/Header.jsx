@@ -2,22 +2,66 @@ import React from 'react';
 import { useChat } from '../../context/ChatContext';
 
 export default function Header() {
-  const { isMobileSidebarOpen, setIsMobileSidebarOpen, setIsSettingsOpen } = useChat();
+  const {
+    toggleSidebar,
+    isSidebarOpen,
+    setIsSettingsOpen,
+    currentThreadId,
+    projectSessions,
+    activeProjectId,
+    projects,
+    messages,
+  } = useChat();
+
+  const activeProject = projects.find((p) => p.id === activeProjectId);
+  const currentSession = (projectSessions[activeProjectId] || []).find(
+    (s) => s.thread_id === currentThreadId
+  );
+  const firstHumanMsg = (messages[currentThreadId] || []).find((m) => m.type === 'human');
+  const chatTitle =
+    currentSession?.first_message && currentSession.first_message !== currentThreadId
+      ? currentSession.first_message
+      : firstHumanMsg?.content
+      ? firstHumanMsg.content
+      : 'New Conversation';
 
   return (
     <header className="h-12 px-3 sm:px-5 border-b border-dark-border/60 bg-dark-surface/40 backdrop-blur-md flex items-center justify-between shrink-0">
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-3">
         <button
           type="button"
-          onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
-          className="lg:hidden p-1.5 text-txt-muted hover:text-white rounded-lg bg-dark-elevated border border-dark-border cursor-pointer"
-          title="Toggle menu"
+          onClick={toggleSidebar}
+          className="p-1.5 text-txt-muted hover:text-white rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border transition-colors cursor-pointer shrink-0"
+          title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
-        <span className="font-medium text-xs sm:text-sm text-white tracking-wide">QA Automation</span>
+
+        <div className="flex flex-col min-w-0 justify-center">
+          {activeProject && (
+            <div className="flex items-center gap-1 text-[10px] text-brand font-medium leading-none pb-0.5">
+              <svg className="w-2.5 h-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                />
+              </svg>
+              <span className="truncate max-w-[160px] sm:max-w-[240px]" title={activeProject.path}>
+                {activeProject.name}
+              </span>
+            </div>
+          )}
+          <span
+            className="font-medium text-xs sm:text-sm text-white tracking-wide truncate max-w-[200px] sm:max-w-md md:max-w-lg lg:max-w-xl leading-tight"
+            title={chatTitle}
+          >
+            {chatTitle}
+          </span>
+        </div>
       </div>
 
       <div className="flex items-center gap-2">

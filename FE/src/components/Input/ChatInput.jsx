@@ -17,9 +17,9 @@ export default function ChatInput() {
     el.style.height = Math.min(el.scrollHeight, 192) + 'px';
   }, [inputText]);
 
-  // Focus on mount or after stream ends
+  // Focus on mount or after stream ends (desktop only to prevent mobile keyboard popups)
   useEffect(() => {
-    if (!isStreaming && textareaRef.current) {
+    if (!isStreaming && textareaRef.current && !isMobileView()) {
       textareaRef.current.focus();
     }
   }, [isStreaming]);

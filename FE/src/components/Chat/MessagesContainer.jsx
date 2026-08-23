@@ -7,6 +7,7 @@ import ThinkingMessage from './ThinkingMessage';
 import ToolCallMessage from './ToolCallMessage';
 import LoadingIndicator from './LoadingIndicator';
 import ErrorMessage from './ErrorMessage';
+import PermissionPrompt from './PermissionPrompt';
 
 export default function MessagesContainer() {
   const {
@@ -22,6 +23,7 @@ export default function MessagesContainer() {
     activeThinkingContent,
     activeSpeechExplanation,
     errorMessage,
+    pendingPermissions,
     loadOlderMessages,
   } = useChat();
 
@@ -29,6 +31,12 @@ export default function MessagesContainer() {
   const prevScrollHeightRef = useRef(0);
   const prevScrollTopRef = useRef(0);
   const isPaginatingRef = useRef(false);
+  const userScrolledUpRef = useRef(false);
+  const prevMessagesCountRef = useRef(0);
+
+  useEffect(() => {
+    userScrolledUpRef.current = false;
+  }, [currentThreadId]);
 
   const sessionMessages = messages[currentThreadId] || [];
 
@@ -40,10 +48,13 @@ export default function MessagesContainer() {
     return true;
   });
 
-  // Handle scroll for older messages pagination
+  // Handle scroll for older messages pagination and user scroll tracking
   const handleScroll = () => {
     const el = containerRef.current;
     if (!el) return;
+
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    userScrolledUpRef.current = distanceFromBottom > 120;
 
     if (
       !isSelectingSession &&
@@ -60,7 +71,11 @@ export default function MessagesContainer() {
     }
   };
 
-  // Restore scroll position after pagination or scroll to bottom on new message / streaming
+  const activePermissions = pendingPermissions.filter(
+    (req) => !req.session_id || !currentThreadId || req.session_id === currentThreadId
+  );
+
+  // Restore scroll position after pagination or scroll to bottom on new message / streaming / permissions
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -70,9 +85,19 @@ export default function MessagesContainer() {
       el.scrollTop = heightDiff + prevScrollTopRef.current;
       isPaginatingRef.current = false;
     } else if (!isSelectingSession) {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
+      if (cleanMessages.length > prevMessagesCountRef.current) {
+        const lastMsg = cleanMessages[cleanMessages.length - 1];
+        if (lastMsg?.type === 'human') {
+          userScrolledUpRef.current = false;
+        }
+      }
+      prevMessagesCountRef.current = cleanMessages.length;
+
+      if (!userScrolledUpRef.current) {
+        requestAnimationFrame(() => {
+          el.scrollTop = el.scrollHeight;
+        });
+      }
     }
   }, [
     cleanMessages.length,
@@ -80,13 +105,15 @@ export default function MessagesContainer() {
     activeThinkingContent,
     isAiResponding,
     isSelectingSession,
+    activePermissions.length,
   ]);
 
   const hasMessages =
     cleanMessages.length > 0 ||
     Boolean(activeStreamContent) ||
     Boolean(activeThinkingContent) ||
-    isAiResponding;
+    isAiResponding ||
+    activePermissions.length > 0;
 
   return (
     <div
@@ -108,9 +135,25 @@ export default function MessagesContainer() {
         </div>
       )}
 
+      {isLoadingMessages && (
+        <div className="h-full flex flex-col items-center justify-center text-center my-auto py-16 w-full animate-msg">
+          <div className="w-10 h-10 rounded-2xl bg-dark-elevated border border-dark-border flex items-center justify-center mb-3 text-brand shadow-sm">
+            <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              />
+            </svg>
+          </div>
+          <span className="text-xs text-txt-muted font-medium">Loading conversation...</span>
+        </div>
+      )}
+
       {!hasMessages && !isLoadingMessages && <EmptyState />}
 
-      {cleanMessages.map((msg, index) => {
+      {!isLoadingMessages && cleanMessages.map((msg, index) => {
         const key = `msg-${index}-${msg.type}`;
         if (msg.type === 'human') {
           return <HumanMessage key={key} content={msg.content} />;
@@ -149,8 +192,13 @@ export default function MessagesContainer() {
         />
       )}
 
-      {/* Loading Indicator */}
-      {(isAiResponding || isLoadingMessages) && <LoadingIndicator />}
+      {/* Pending Permission / Question Prompts (scoped to current active session) */}
+      {activePermissions.map((req) => (
+        <PermissionPrompt key={req.request_id} request={req} />
+      ))}
+
+      {/* Loading Indicator (during live agent stream, hidden when awaiting permission in current session) */}
+      {isAiResponding && activePermissions.length === 0 && <LoadingIndicator />}
 
       {/* Error Banner */}
       <ErrorMessage message={errorMessage} />

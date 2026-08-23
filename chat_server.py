@@ -17,7 +17,12 @@ from typing import Literal
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk import ResultMessage, StreamEvent, list_sessions as sdk_list_sessions
-from claude_agent_sdk.types import SettingSource
+from claude_agent_sdk.types import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    SettingSource,
+    ToolPermissionContext,
+)
 
 from schemas import Project, ProjectCreate, ProjectsListResponse, ProjectSessionsResponse, SessionResponse
 
@@ -38,6 +43,11 @@ _INDUSTRIAL_HTML_PATH = Path(__file__).parent / "industrial" / "index.html"
 _INDUSTRIAL_HTML = _INDUSTRIAL_HTML_PATH.read_text() if _INDUSTRIAL_HTML_PATH.exists() else "<h1>industrial/index.html not found</h1>"
 
 _DEFAULT_WORKSPACE = "."
+
+# ============== Permission registry ==============
+# Maps request_id -> asyncio.Future that frontend resolves via POST /api/permissions/decision
+_permission_futures: dict[str, asyncio.Future] = {}
+_permission_meta: dict[str, dict] = {}
 
 # ============== SQLite (projects DB) ==============
 import sqlite3
@@ -605,6 +615,48 @@ async def get_current_workspace(session_id: str | None = None):
     return {"workspace": _DEFAULT_WORKSPACE}
 
 
+# ============== Permission endpoints ==============
+
+class PermissionDecisionRequest(BaseModel):
+    request_id: str
+    decision: Literal["allow", "deny"]
+    updated_input: dict | None = None
+    answers: dict | None = None
+    message: str | None = None
+
+
+@app.post("/api/permissions/decision")
+async def permission_decision(req: PermissionDecisionRequest):
+    """Resolve a pending permission request (from can_use_tool callback)."""
+    future = _permission_futures.pop(req.request_id, None)
+    if future is None:
+        raise HTTPException(status_code=404, detail="Permission request not found or already resolved")
+    if future.done():
+        return {"status": "already_resolved"}
+    future.set_result({
+        "decision": req.decision,
+        "updated_input": req.updated_input,
+        "answers": req.answers,
+        "message": req.message,
+    })
+    return {"status": "ok"}
+
+
+@app.get("/api/permissions/pending")
+async def permission_pending(thread_id: str | None = None):
+    """List pending permission requests for a given thread (session_id).
+    If thread_id is None, returns all pending requests (for backwards compatibility).
+    """
+    requests = [
+        {**meta, "request_id": rid}
+        for rid, meta in _permission_meta.items()
+        if rid in _permission_futures and not _permission_futures[rid].done()
+    ]
+    if thread_id is not None:
+        requests = [r for r in requests if r.get("session_id") == thread_id]
+    return {"requests": requests}
+
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     """Send a message and stream the response using Claude Agent SDK.
@@ -637,6 +689,55 @@ async def chat(request: ChatRequest):
     session_exists = jsonl_path.exists()
 
     async def event_stream():
+        # Unified queue for all SSE events (both from receive_response worker and can_use_tool callback)
+        sse_queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
+
+        async def can_use_tool(
+            tool_name: str,
+            tool_input: dict,
+            context: ToolPermissionContext,
+        ) -> PermissionResultAllow | PermissionResultDeny:
+            request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex[:8]}"
+            future: asyncio.Future = asyncio.Future()
+            _permission_futures[request_id] = future
+            meta = {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "tool_use_id": context.tool_use_id,
+                "title": context.title,
+                "description": context.description,
+                "suggestions": [s.to_dict() for s in (context.suggestions or [])],
+                "session_id": session_id,
+            }
+            _permission_meta[request_id] = meta
+            # Put SSE event directly into queue so the generator yields it immediately
+            sse_queue.put_nowait(("message", {
+                "type": "permission_request",
+                "request_id": request_id,
+                "session_id": session_id,
+                **meta,
+            }))
+            try:
+                result = await asyncio.wait_for(future, timeout=300)
+            except asyncio.TimeoutError:
+                result = {"decision": "deny", "message": "Permission request timed out"}
+            finally:
+                _permission_futures.pop(request_id, None)
+                _permission_meta.pop(request_id, None)
+            decision = result["decision"]
+            if decision == "allow":
+                # AskUserQuestion: answers IS the tool result — must be returned as updated_input
+                answers = result.get("answers")
+                if tool_name == "AskUserQuestion" and answers is not None:
+                    # JS UI needs questions array + answers; pass both
+                    return PermissionResultAllow(updated_input={
+                        "questions": tool_input.get("questions", []),
+                        "answers": answers,
+                    })
+                updated = result.get("updated_input")
+                return PermissionResultAllow(updated_input=updated if updated is not None else tool_input)
+            return PermissionResultDeny(message=result.get("message", "User denied"))
+
         speech_mode = request.speech_explanation
         opts = _build_options(
             workspace=workspace,
@@ -652,8 +753,9 @@ async def chat(request: ChatRequest):
         if speech_mode:
             opts.output_format = SYSTEM_PROMPT_EXPLANATION_SCHEMA
 
-        pending_tools: dict[int, dict] = {}
-        turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        # Wire permission callback; SDK auto-sets permission_prompt_tool_name="stdio"
+        # when can_use_tool is set, routing all permission requests through the callback
+        opts.can_use_tool = can_use_tool
 
         # Remember JSONL file size before this turn so we can read only new entries
         # after the turn completes to get actual tool result content
@@ -661,181 +763,195 @@ async def chat(request: ChatRequest):
         jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
         jsonl_size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
 
-        try:
-            # Reuse cached client only when no custom config is passed — custom opts
-            # (skills, setting_sources, permission_mode) must be fresh per request
-            has_custom_config = any([
-                request.setting_sources is not None,
-                request.skills is not None,
-                request.permission_mode is not None,
-            ])
-            cache_key = f"{workspace}:{session_id}"
-            async with _cache_lock:
-                if cache_key in _WORKSPACE_CLIENTS and not has_custom_config:
-                    client = _WORKSPACE_CLIENTS[cache_key]
-                else:
-                    client = ClaudeSDKClient(options=opts)
-                    await client.connect()
-                    if not has_custom_config:
-                        _WORKSPACE_CLIENTS[cache_key] = client
+        async def response_reader():
+            pending_tools: dict[int, dict] = {}
+            turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            try:
+                # Reuse cached client only when no custom config is passed — custom opts
+                # (skills, setting_sources, permission_mode) must be fresh per request
+                has_custom_config = any([
+                    request.setting_sources is not None,
+                    request.skills is not None,
+                    request.permission_mode is not None,
+                ])
+                cache_key = f"{workspace}:{session_id}"
+                async with _cache_lock:
+                    if cache_key in _WORKSPACE_CLIENTS and not has_custom_config:
+                        client = _WORKSPACE_CLIENTS[cache_key]
+                    else:
+                        client = ClaudeSDKClient(options=opts)
+                        await client.connect()
+                        if not has_custom_config:
+                            _WORKSPACE_CLIENTS[cache_key] = client
 
-            await client.query(prompt=request.message)
+                await client.query(prompt=request.message)
 
-            async for msg in client.receive_response():
-                # --- StreamEvent ---
-                if isinstance(msg, StreamEvent):
-                    evt = msg.event
-                    evt_type = evt.get("type")
+                async for msg in client.receive_response():
+                    # --- StreamEvent ---
+                    if isinstance(msg, StreamEvent):
+                        evt = msg.event
+                        evt_type = evt.get("type")
 
-                    if evt_type == "content_block_delta":
-                        delta = evt.get("delta", {})
-                        d_type = delta.get("type")
+                        if evt_type == "content_block_delta":
+                            delta = evt.get("delta", {})
+                            d_type = delta.get("type")
 
-                        if d_type == "text_delta":
-                            yield format_sse("message", {
-                                "type": "text_delta",
-                                "content": delta.get("text", ""),
-                            })
+                            if d_type == "text_delta":
+                                sse_queue.put_nowait(("message", {
+                                    "type": "text_delta",
+                                    "content": delta.get("text", ""),
+                                }))
 
-                        elif d_type == "thinking_delta":
-                            yield format_sse("message", {
-                                "type": "thinking_delta",
-                                "content": delta.get("thinking", ""),
-                            })
+                            elif d_type == "thinking_delta":
+                                sse_queue.put_nowait(("message", {
+                                    "type": "thinking_delta",
+                                    "content": delta.get("thinking", ""),
+                                }))
 
-                        elif d_type == "input_json_delta":
-                            idx = evt.get("index")
-                            partial = delta.get("partial_json", "")
-                            if idx in pending_tools:
-                                pending_tools[idx]["args_str"] += partial
+                            elif d_type == "input_json_delta":
+                                idx = evt.get("index")
+                                partial = delta.get("partial_json", "")
+                                if idx in pending_tools:
+                                    pending_tools[idx]["args_str"] += partial
 
-                    elif evt_type == "content_block_start":
-                        cb = evt.get("content_block", {})
-                        if cb.get("type") == "tool_use":
-                            idx: int | None = evt.get("index")
-                            if idx is not None:
-                                pending_tools[idx] = {
-                                    "name": cb.get("name"),
-                                    "id": cb.get("id"),
-                                    "args_str": "",
-                                }
+                        elif evt_type == "content_block_start":
+                            cb = evt.get("content_block", {})
+                            if cb.get("type") == "tool_use":
+                                idx: int | None = evt.get("index")
+                                if idx is not None:
+                                    pending_tools[idx] = {
+                                        "name": cb.get("name"),
+                                        "id": cb.get("id"),
+                                        "args_str": "",
+                                    }
 
-                    elif evt_type == "message_delta":
-                        usage = evt.get("usage", {})
-                        if usage:
-                            turn_usage["input_tokens"] += usage.get("prompt_tokens", 0)
-                            turn_usage["output_tokens"] += usage.get("completion_tokens", 0)
+                        elif evt_type == "message_delta":
+                            usage = evt.get("usage", {})
+                            if usage:
+                                turn_usage["input_tokens"] += usage.get("prompt_tokens", 0)
+                                turn_usage["output_tokens"] += usage.get("completion_tokens", 0)
+                                turn_usage["total_tokens"] = (
+                                    turn_usage["input_tokens"] + turn_usage["output_tokens"]
+                                )
+
+                        elif evt_type == "content_block_stop":
+                            pass
+
+                        elif evt_type == "message_stop":
+                            for idx, tool_data in pending_tools.items():
+                                args_str = tool_data.get("args_str", "")
+                                try:
+                                    args_json = json.loads(args_str) if args_str else {}
+                                except json.JSONDecodeError:
+                                    args_json = {}
+                                sse_queue.put_nowait(("message", {
+                                    "type": "tool_result",
+                                    "tool_name": tool_data["name"],
+                                    "tool_id": tool_data["id"],
+                                    "args": args_json,
+                                }))
+                            pending_tools.clear()
+
+                    # --- ResultMessage ---
+                    elif isinstance(msg, ResultMessage):
+                        if msg.model_usage and turn_usage["total_tokens"] == 0:
+                            for model, u in msg.model_usage.items():
+                                turn_usage["input_tokens"] += u.get("inputTokens", 0)
+                                turn_usage["output_tokens"] += u.get("outputTokens", 0)
                             turn_usage["total_tokens"] = (
                                 turn_usage["input_tokens"] + turn_usage["output_tokens"]
                             )
+                        elif msg.usage and turn_usage["total_tokens"] == 0:
+                            turn_usage["input_tokens"] = msg.usage.get("input_tokens", 0)
+                            turn_usage["output_tokens"] = msg.usage.get("output_tokens", 0)
+                            turn_usage["total_tokens"] = msg.usage.get("total_tokens", 0)
 
-                    elif evt_type == "content_block_stop":
-                        # Track when a tool_use content block finishes
-                        pass
+                        if speech_mode and msg.structured_output:
+                            explanation = msg.structured_output.get("explanation", "")
+                            if explanation:
+                                sse_queue.put_nowait(("message", {
+                                    "type": "speech_explanation",
+                                    "content": explanation,
+                                }))
 
-                    elif evt_type == "message_stop":
-                        # Emit any pending tool calls as tool_result events
-                        for idx, tool_data in pending_tools.items():
-                            args_str = tool_data.get("args_str", "")
-                            try:
-                                args_json = json.loads(args_str) if args_str else {}
-                            except json.JSONDecodeError:
-                                args_json = {}
-                            yield format_sse("message", {
-                                "type": "tool_result",
-                                "tool_name": tool_data["name"],
-                                "tool_id": tool_data["id"],
-                                "args": args_json,
-                            })
-                        pending_tools.clear()
+                        try:
+                            ctx = await client.get_context_usage()
+                            if ctx:
+                                sse_queue.put_nowait(("message", {
+                                    "type": "context_usage",
+                                    "data": ctx,
+                                }))
+                        except Exception as e:
+                            print(f"[WARN] get_context_usage failed: {e}")
 
-                # --- ResultMessage ---
-                elif isinstance(msg, ResultMessage):
-                    # print(f"[USAGE] input={turn_usage['input_tokens']} output={turn_usage['output_tokens']} total={turn_usage['total_tokens']} model_usage={msg.model_usage} usage={msg.usage} cost=${msg.total_cost_usd}")
-                    # Grab usage from ResultMessage — prefer model_usage (camelCase keys)
-                    if msg.model_usage and turn_usage["total_tokens"] == 0:
-                        for model, u in msg.model_usage.items():
-                            turn_usage["input_tokens"] += u.get("inputTokens", 0)
-                            turn_usage["output_tokens"] += u.get("outputTokens", 0)
-                        turn_usage["total_tokens"] = (
-                            turn_usage["input_tokens"] + turn_usage["output_tokens"]
-                        )
-                    elif msg.usage and turn_usage["total_tokens"] == 0:
-                        turn_usage["input_tokens"] = msg.usage.get("input_tokens", 0)
-                        turn_usage["output_tokens"] = msg.usage.get("output_tokens", 0)
-                        turn_usage["total_tokens"] = msg.usage.get("total_tokens", 0)
-
-                    # In speech mode, extract structured explanation
-                    if speech_mode and msg.structured_output:
-                        explanation = msg.structured_output.get("explanation", "")
-                        if explanation:
-                            yield format_sse("message", {
-                                "type": "speech_explanation",
-                                "content": explanation,
-                            })
-
-                    # Get full context usage breakdown via SDK
-                    try:
-                        ctx = await client.get_context_usage()
-                        if ctx:
-                            yield format_sse("message", {
-                                "type": "context_usage",
-                                "data": ctx,
-                            })
-                    except Exception as e:
-                        print(f"[WARN] get_context_usage failed: {e}")
-
-                    # Read new JSONL entries after this turn to get actual tool result content.
-                    # The SSE only streams tool input (args), not result content — supplement from JSONL.
-                    if jsonl_path.exists():
-                        with open(jsonl_path, "rb") as f:
-                            f.seek(jsonl_size_before)
-                            new_bytes = f.read()
-                        if new_bytes.strip():
-                            for line in new_bytes.split(b"\n"):
-                                if not line.strip():
-                                    continue
-                                try:
-                                    entry = json.loads(line.decode("utf-8", errors="replace"))
-                                except Exception:
-                                    continue
-                                if entry.get("type") != "user":
-                                    continue
-                                msg_content = entry.get("message", {}).get("content", [])
-                                if not isinstance(msg_content, list):
-                                    continue
-                                for block in msg_content:
-                                    if block.get("type") != "tool_result":
+                        if jsonl_path.exists():
+                            with open(jsonl_path, "rb") as f:
+                                f.seek(jsonl_size_before)
+                                new_bytes = f.read()
+                            if new_bytes.strip():
+                                for line in new_bytes.split(b"\n"):
+                                    if not line.strip():
                                         continue
-                                    tool_result = block.get("content", "")
-                                    text_parts = []
-                                    if isinstance(tool_result, list):
-                                        for item in tool_result:
-                                            if isinstance(item, dict):
-                                                if item.get("type") == "text":
-                                                    text_parts.append(item.get("text", ""))
-                                    content = "".join(text_parts) if text_parts else str(tool_result)
-                                    # Skip StructuredOutput results — speech_explanation already emitted
-                                    source_uuid = entry.get("sourceToolAssistantUUID", "")
-                                    if source_uuid in pending_tools and pending_tools[source_uuid].get("name") == "StructuredOutput":
+                                    try:
+                                        entry = json.loads(line.decode("utf-8", errors="replace"))
+                                    except Exception:
                                         continue
-                                    if content:
-                                        yield format_sse("message", {
-                                            "type": "tool_result_content",
-                                            "tool_id": source_uuid,
-                                            "content": content,
-                                        })
-                                pending_tools.clear()
+                                    if entry.get("type") != "user":
+                                        continue
+                                    msg_content = entry.get("message", {}).get("content", [])
+                                    if not isinstance(msg_content, list):
+                                        continue
+                                    for block in msg_content:
+                                        if block.get("type") != "tool_result":
+                                            continue
+                                        tool_result = block.get("content", "")
+                                        text_parts = []
+                                        if isinstance(tool_result, list):
+                                            for item in tool_result:
+                                                if isinstance(item, dict):
+                                                    if item.get("type") == "text":
+                                                        text_parts.append(item.get("text", ""))
+                                        content = "".join(text_parts) if text_parts else str(tool_result)
+                                        source_uuid = entry.get("sourceToolAssistantUUID", "")
+                                        if source_uuid in pending_tools and pending_tools[source_uuid].get("name") == "StructuredOutput":
+                                            continue
+                                        if content:
+                                            sse_queue.put_nowait(("message", {
+                                                "type": "tool_result_content",
+                                                "tool_id": source_uuid,
+                                                "content": content,
+                                            }))
+                                    pending_tools.clear()
 
-                    yield format_sse("done", {
-                        "thread_id": session_id,
-                        "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                    })
-                    return
+                        sse_queue.put_nowait(("done", {
+                            "thread_id": session_id,
+                            "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
+                        }))
 
-        except Exception as e:
-            print(f"Error during streaming: {e}")
-            yield format_sse("error", {"message": str(e)})
+            except Exception as err:
+                print(f"Error during response_reader: {err}")
+                sse_queue.put_nowait(("error", {"message": str(err)}))
+            finally:
+                sse_queue.put_nowait(None)
+
+        reader_task = asyncio.create_task(response_reader())
+        try:
+            while True:
+                item = await sse_queue.get()
+                if item is None:
+                    break
+                event_name, event_data = item
+                yield format_sse(event_name, event_data)
+        finally:
+            # Resolve dangling permissions FIRST so wait_for in response_reader exits.
+            # Only AFTER resolving should we cancel the reader task.
+            for rid, meta in list(_permission_meta.items()):
+                if meta.get("session_id") == session_id and _permission_futures.get(rid) and not _permission_futures[rid].done():
+                    _permission_futures[rid].set_result({"decision": "deny", "message": "Session ended"})
+                    _permission_futures.pop(rid, None)
+                    _permission_meta.pop(rid, None)
+            if not reader_task.done():
+                reader_task.cancel()
 
     return StreamingResponse(
         event_stream(),

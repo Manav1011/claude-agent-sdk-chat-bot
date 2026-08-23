@@ -51,6 +51,32 @@ export async function deleteSessionApi(threadId) {
   return res.json();
 }
 
+export async function fetchPendingPermissions(threadId = null) {
+  const url = threadId ? `/api/permissions/pending?thread_id=${encodeURIComponent(threadId)}` : '/api/permissions/pending';
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed to fetch pending permissions');
+  return res.json();
+}
+
+export async function submitPermissionDecision({ requestId, decision, updatedInput, answers, message }) {
+  const res = await fetch('/api/permissions/decision', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      request_id: requestId,
+      decision,
+      updated_input: updatedInput || null,
+      answers: answers || null,
+      message: message || null,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || 'Failed to submit permission decision');
+  }
+  return res.json();
+}
+
 export async function* streamChatApi({
   message,
   threadId,

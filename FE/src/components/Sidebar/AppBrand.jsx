@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function AppBrand() {
   return (
-    <div class="p-3 border-b border-dark-border flex items-center justify-between">
+    <div className="p-3 border-b border-dark-border flex items-center justify-between">
       <div className="flex items-center gap-2.5">
         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand to-amber-600 flex items-center justify-center shadow-glow text-dark-bg font-bold">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

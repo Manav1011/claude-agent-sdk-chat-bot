@@ -7,6 +7,8 @@ import {
   fetchProjectSessions,
   fetchSessionMessages,
   deleteSessionApi,
+  fetchPendingPermissions,
+  submitPermissionDecision,
   streamChatApi,
 } from '../utils/api';
 
@@ -78,9 +80,50 @@ export function ChatProvider({ children }) {
   // Modals & UI State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    return typeof window !== 'undefined' ? window.innerWidth >= 1024 : true;
+  });
   const [notifications, setNotifications] = useState([]);
   const [errorMessage, setErrorMessage] = useState(null);
+  const [pendingPermissions, setPendingPermissions] = useState([]);
+
+  // Notifications helper
+  const showNotification = useCallback((message, type = 'info') => {
+    const id = Date.now() + Math.random().toString(36).substring(2);
+    setNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 3300);
+  }, []);
+
+  const refreshPendingPermissions = useCallback(async (threadId = currentThreadId) => {
+    try {
+      const data = await fetchPendingPermissions(threadId);
+      setPendingPermissions(data.requests || []);
+    } catch (e) {
+      console.error('Failed to fetch pending permissions:', e);
+    }
+  }, [currentThreadId]);
+
+  const respondToPermission = useCallback(async (requestId, decision, payload = {}) => {
+    try {
+      await submitPermissionDecision({
+        requestId,
+        decision,
+        updatedInput: payload.updatedInput,
+        answers: payload.answers,
+        message: payload.message,
+      });
+      setPendingPermissions(prev => prev.filter(r => r.request_id !== requestId));
+      showNotification(
+        decision === 'allow' ? 'Permission allowed' : 'Permission denied',
+        decision === 'allow' ? 'success' : 'info'
+      );
+    } catch (e) {
+      showNotification(e.message || 'Failed to submit permission decision', 'error');
+      throw e;
+    }
+  }, [showNotification]);
 
   // Speech TTS State
   const [speechState, setSpeechState] = useState({
@@ -91,15 +134,6 @@ export function ChatProvider({ children }) {
 
   const abortControllerRef = useRef(null);
   const currentSpeechIdRef = useRef(0);
-
-  // Notifications helper
-  const showNotification = useCallback((message, type = 'info') => {
-    const id = Date.now() + Math.random().toString(36).substring(2);
-    setNotifications(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setNotifications(prev => prev.filter(n => n.id !== id));
-    }, 3300);
-  }, []);
 
   // Speech Audio Stop
   const stopSpeechAudio = useCallback(() => {
@@ -346,10 +380,19 @@ export function ChatProvider({ children }) {
     }
   }, [activeProjectId, loadProjectSessions, showNotification]);
 
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarOpen((prev) => !prev);
+  }, []);
+
   // Start New Chat
-  const startNewChat = useCallback(() => {
+  const startNewChat = useCallback((projId = null) => {
     if (window.innerWidth < 1024) {
-      setIsMobileSidebarOpen(false);
+      setIsSidebarOpen(false);
+    }
+    if (projId) {
+      setActiveProjectId(projId);
+      localStorage.setItem('qa-active-project-id', String(projId));
+      setExpandedProjects((prev) => new Set(prev).add(projId));
     }
     stopSpeechAudio();
     if (abortControllerRef.current) {
@@ -369,7 +412,7 @@ export function ChatProvider({ children }) {
   // Select Session
   const selectSession = useCallback(async (threadId, projId = null) => {
     if (window.innerWidth < 1024) {
-      setIsMobileSidebarOpen(false);
+      setIsSidebarOpen(false);
     }
     stopSpeechAudio();
     if (projId) {
@@ -396,6 +439,7 @@ export function ChatProvider({ children }) {
         ...prev,
         [threadId]: data.next_cursor !== undefined ? data.next_cursor : null,
       }));
+      refreshPendingPermissions(threadId);
     } catch (e) {
       console.error('Failed to load session messages:', e);
       setErrorMessage('Failed to load session messages from server.');
@@ -405,7 +449,7 @@ export function ChatProvider({ children }) {
         setIsSelectingSession(false);
       }, 150);
     }
-  }, [activeProjectId, stopSpeechAudio, setCurrentThread]);
+  }, [activeProjectId, stopSpeechAudio, setCurrentThread, refreshPendingPermissions]);
 
   // Load Older Messages on scroll
   const loadOlderMessages = useCallback(async (threadId = currentThreadId) => {
@@ -476,7 +520,9 @@ export function ChatProvider({ children }) {
     let sessionThreadId = currentThreadId;
     const isNewSession = !sessionThreadId;
     if (!sessionThreadId) {
-      sessionThreadId = `session-${Date.now().toString(36)}`;
+      sessionThreadId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       setCurrentThread(sessionThreadId);
     }
 
@@ -504,11 +550,37 @@ export function ChatProvider({ children }) {
         permissionMode,
         signal: abortControllerRef.current.signal,
       })) {
+        const incomingSessionId = data.session_id || data.thread_id;
+        if (incomingSessionId && incomingSessionId !== sessionThreadId) {
+          const prevId = sessionThreadId;
+          sessionThreadId = incomingSessionId;
+          setCurrentThread(incomingSessionId);
+          setMessages(prev => {
+            const existing = prev[prevId] || [];
+            const updated = { ...prev, [incomingSessionId]: existing };
+            if (prevId !== incomingSessionId) delete updated[prevId];
+            return updated;
+          });
+        }
+
         if (event === 'message') {
           if (data.type === 'human') continue;
 
           if (data.type === 'context_usage') {
             setContextUsage(data.data);
+            continue;
+          }
+
+          if (data.type === 'permission_request') {
+            setIsAiResponding(false);
+            const reqItem = {
+              ...data,
+              session_id: data.session_id || sessionThreadId,
+            };
+            setPendingPermissions((prev) => {
+              if (prev.some((r) => r.request_id === data.request_id)) return prev;
+              return [...prev, reqItem];
+            });
             continue;
           }
 
@@ -718,7 +790,11 @@ export function ChatProvider({ children }) {
     activeSpeechExplanation,
     isSettingsOpen,
     isContextModalOpen,
-    isMobileSidebarOpen,
+    isSidebarOpen,
+    setIsSidebarOpen,
+    toggleSidebar,
+    isMobileSidebarOpen: isSidebarOpen,
+    setIsMobileSidebarOpen: setIsSidebarOpen,
     notifications,
     errorMessage,
     speechState,
@@ -747,7 +823,6 @@ export function ChatProvider({ children }) {
     },
     setIsSettingsOpen,
     setIsContextModalOpen,
-    setIsMobileSidebarOpen,
     showNotification,
     toggleProject,
     expandAllProjects,
@@ -764,6 +839,9 @@ export function ChatProvider({ children }) {
     playSpeechExplanation,
     stopSpeechAudio,
     cycleSpeechRate,
+    pendingPermissions,
+    respondToPermission,
+    refreshPendingPermissions,
   };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

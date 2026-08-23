@@ -1166,7 +1166,10 @@
     }
 
     let _scrollRafPending = false;
-    function scrollToBottom() {
+    let _userScrolledUp = false;
+
+    function scrollToBottom(force = false) {
+      if (!force && _userScrolledUp) return;
       if (_scrollRafPending) return;
       _scrollRafPending = true;
       requestAnimationFrame(() => {
@@ -1219,8 +1222,17 @@
       updateContextBar(null);
 
       state.isSelectingSession = true;
-      el.messagesContainer.innerHTML = '';
-      showLoadingIndicator();
+      el.messagesContainer.innerHTML = `
+        <div class="h-full flex flex-col items-center justify-center text-center my-auto py-16 w-full animate-msg">
+          <div class="w-10 h-10 rounded-2xl bg-dark-elevated border border-dark-border flex items-center justify-center mb-3 text-brand shadow-sm">
+            <svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          <span class="text-xs text-txt-muted font-medium">Loading conversation...</span>
+        </div>
+      `;
 
       try {
         const projectParam = state.activeProjectId ? `&project_id=${state.activeProjectId}` : '';
@@ -1629,6 +1641,9 @@
     });
 
     el.messagesContainer?.addEventListener('scroll', () => {
+      const distanceFromBottom = el.messagesContainer.scrollHeight - el.messagesContainer.scrollTop - el.messagesContainer.clientHeight;
+      _userScrolledUp = distanceFromBottom > 120;
+
       if (
         !state.isSelectingSession &&
         el.messagesContainer.scrollTop <= 60 &&
