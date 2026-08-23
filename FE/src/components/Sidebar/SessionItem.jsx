@@ -12,7 +12,7 @@ export default function SessionItem({ session, projectId }) {
 
   const handleClick = (e) => {
     if (e.target.closest('.delete-session-btn')) return;
-    selectSession(session.thread_id, projectId);
+    selectSession(session.thread_id, projectId, rawTitle);
   };
 
   const handleDelete = (e) => {

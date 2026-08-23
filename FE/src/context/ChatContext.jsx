@@ -69,13 +69,17 @@ export function ChatProvider({ children }) {
     return localStorage.getItem('qa-permission-mode') || null;
   });
 
-  // Streaming & Context usage
+  // Streaming & Context usage (per-session streaming state)
   const [contextUsage, setContextUsage] = useState(null);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [activeStreamContent, setActiveStreamContent] = useState('');
-  const [activeThinkingContent, setActiveThinkingContent] = useState('');
-  const [activeSpeechExplanation, setActiveSpeechExplanation] = useState(null);
-  const [isAiResponding, setIsAiResponding] = useState(false);
+  const [activeStreams, setActiveStreams] = useState({});
+  const abortControllersRef = useRef({});
+
+  // Computed streaming state for current active thread
+  const activeStreamContent = (currentThreadId && activeStreams[currentThreadId]?.streamContent) || '';
+  const activeThinkingContent = (currentThreadId && activeStreams[currentThreadId]?.thinkingContent) || '';
+  const activeSpeechExplanation = (currentThreadId && activeStreams[currentThreadId]?.speechExplanation) || null;
+  const isStreaming = Boolean(currentThreadId && activeStreams[currentThreadId]?.isStreaming);
+  const isAiResponding = Boolean(currentThreadId && activeStreams[currentThreadId]?.isAiResponding);
 
   // Modals & UI State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -86,6 +90,22 @@ export function ChatProvider({ children }) {
   const [notifications, setNotifications] = useState([]);
   const [errorMessage, setErrorMessage] = useState(null);
   const [pendingPermissions, setPendingPermissions] = useState([]);
+
+  // Multi-Session Open Tabs State
+  const [openTabs, setOpenTabs] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('qa-open-tabs') || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('qa-open-tabs', JSON.stringify(openTabs));
+    } catch (e) {}
+  }, [openTabs]);
 
   // Notifications helper
   const showNotification = useCallback((message, type = 'info') => {
@@ -132,7 +152,6 @@ export function ChatProvider({ children }) {
     rate: 1.0,
   });
 
-  const abortControllerRef = useRef(null);
   const currentSpeechIdRef = useRef(0);
 
   // Speech Audio Stop
@@ -384,72 +403,186 @@ export function ChatProvider({ children }) {
     setIsSidebarOpen((prev) => !prev);
   }, []);
 
+  // Sync project session titles and message titles to openTabs
+  useEffect(() => {
+    setOpenTabs((prev) => {
+      let hasChanges = false;
+      const updated = prev.map((tab) => {
+        if (!tab.threadId) return tab;
+        // 1. Search in projectSessions
+        let foundSession = null;
+        if (tab.projectId && projectSessions[tab.projectId]) {
+          foundSession = projectSessions[tab.projectId].find((s) => s.thread_id === tab.threadId);
+        }
+        if (!foundSession) {
+          for (const list of Object.values(projectSessions)) {
+            const match = list.find((s) => s.thread_id === tab.threadId);
+            if (match) {
+              foundSession = match;
+              break;
+            }
+          }
+        }
+        if (foundSession && foundSession.first_message && foundSession.first_message !== tab.threadId && foundSession.first_message !== tab.title) {
+          hasChanges = true;
+          return { ...tab, title: foundSession.first_message, projectId: foundSession.project_id || tab.projectId };
+        }
+
+        // 2. Search in in-memory messages if title is generic
+        const isGenericTitle = !tab.title || tab.title === 'Conversation' || tab.title === 'New Conversation' || tab.title === tab.threadId;
+        if (isGenericTitle && messages[tab.threadId]?.length) {
+          const firstHuman = messages[tab.threadId].find((m) => m.type === 'human')?.content;
+          if (firstHuman && firstHuman !== tab.title) {
+            hasChanges = true;
+            return { ...tab, title: firstHuman.slice(0, 36) };
+          }
+        }
+
+        return tab;
+      });
+      return hasChanges ? updated : prev;
+    });
+  }, [projectSessions, messages]);
+
   // Start New Chat
   const startNewChat = useCallback((projId = null) => {
     if (window.innerWidth < 1024) {
       setIsSidebarOpen(false);
     }
-    if (projId) {
-      setActiveProjectId(projId);
-      localStorage.setItem('qa-active-project-id', String(projId));
-      setExpandedProjects((prev) => new Set(prev).add(projId));
+    const targetProjId = projId || activeProjectId;
+    if (targetProjId) {
+      setActiveProjectId(targetProjId);
+      localStorage.setItem('qa-active-project-id', String(targetProjId));
+      setExpandedProjects((prev) => new Set(prev).add(targetProjId));
     }
     stopSpeechAudio();
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    setIsStreaming(false);
-    setIsAiResponding(false);
-    setActiveStreamContent('');
-    setActiveThinkingContent('');
-    setActiveSpeechExplanation(null);
     setErrorMessage(null);
     setContextUsage(null);
     setCurrentThread(null);
-  }, [stopSpeechAudio, setCurrentThread]);
+
+    setOpenTabs((prev) => {
+      const hasNull = prev.some((t) => t.threadId === null);
+      if (hasNull) return prev;
+      return [...prev, { threadId: null, projectId: targetProjId, title: 'New Conversation' }];
+    });
+  }, [stopSpeechAudio, setCurrentThread, activeProjectId]);
 
   // Select Session
-  const selectSession = useCallback(async (threadId, projId = null) => {
+  const selectSession = useCallback(async (threadId, projId = null, customTitle = null) => {
     if (window.innerWidth < 1024) {
       setIsSidebarOpen(false);
     }
     stopSpeechAudio();
-    if (projId) {
-      setActiveProjectId(projId);
-      localStorage.setItem('qa-active-project-id', projId);
+    const pId = projId || activeProjectId;
+    if (pId) {
+      setActiveProjectId(pId);
+      localStorage.setItem('qa-active-project-id', String(pId));
     }
     setCurrentThread(threadId);
     setContextUsage(null);
-    setIsSelectingSession(true);
-    setIsLoadingMessages(true);
     setErrorMessage(null);
-    setActiveStreamContent('');
-    setActiveThinkingContent('');
-    setActiveSpeechExplanation(null);
+
+    // Resolve initial title
+    let initialTitle = customTitle;
+    if (!initialTitle || initialTitle === 'Conversation') {
+      const list = (pId && projectSessions[pId]) || [];
+      const s = list.find((item) => item.thread_id === threadId);
+      if (s && s.first_message && s.first_message !== s.thread_id) {
+        initialTitle = s.first_message;
+      } else {
+        const msgs = messages[threadId] || [];
+        const human = msgs.find((m) => m.type === 'human');
+        if (human && human.content) {
+          initialTitle = human.content.slice(0, 36);
+        }
+      }
+    }
+
+    setOpenTabs((prev) => {
+      const existing = prev.find((t) => t.threadId === threadId);
+      if (existing) {
+        return prev.map((t) =>
+          t.threadId === threadId
+            ? {
+                ...t,
+                projectId: pId || t.projectId,
+                title: initialTitle || t.title || 'Conversation',
+              }
+            : t
+        );
+      }
+      return [...prev, { threadId, projectId: pId, title: initialTitle || 'Conversation' }];
+    });
+
+    const alreadyHasMessages = Boolean(messages[threadId]?.length);
+    const isCurrentlyStreaming = Boolean(activeStreams[threadId]?.isStreaming);
+
+    if (!alreadyHasMessages && !isCurrentlyStreaming) {
+      setIsSelectingSession(true);
+      setIsLoadingMessages(true);
+    }
 
     try {
-      const pId = projId || activeProjectId;
       const data = await fetchSessionMessages(threadId, pId, null, 50);
+      const loadedMessages = data.messages || [];
       setMessages(prev => ({
         ...prev,
-        [threadId]: data.messages || [],
+        [threadId]: loadedMessages,
       }));
       setSessionCursors(prev => ({
         ...prev,
         [threadId]: data.next_cursor !== undefined ? data.next_cursor : null,
       }));
+
+      // If tab still has a generic title, infer from loaded messages
+      const firstHuman = loadedMessages.find((m) => m.type === 'human')?.content;
+      if (firstHuman) {
+        setOpenTabs((prev) =>
+          prev.map((t) =>
+            t.threadId === threadId && (!t.title || t.title === 'Conversation' || t.title === 'New Conversation' || t.title === t.threadId)
+              ? { ...t, title: firstHuman.slice(0, 36) }
+              : t
+          )
+        );
+      }
+
       refreshPendingPermissions(threadId);
     } catch (e) {
       console.error('Failed to load session messages:', e);
-      setErrorMessage('Failed to load session messages from server.');
+      if (!alreadyHasMessages) {
+        setErrorMessage('Failed to load session messages from server.');
+      }
     } finally {
       setIsLoadingMessages(false);
       setTimeout(() => {
         setIsSelectingSession(false);
       }, 150);
     }
-  }, [activeProjectId, stopSpeechAudio, setCurrentThread, refreshPendingPermissions]);
+  }, [activeProjectId, stopSpeechAudio, setCurrentThread, refreshPendingPermissions, messages, activeStreams, projectSessions]);
+
+  // Close Tab
+  const closeTab = useCallback((threadIdToClose) => {
+    setOpenTabs((prevTabs) => {
+      const idx = prevTabs.findIndex((t) => t.threadId === threadIdToClose);
+      if (idx === -1) return prevTabs;
+      const nextTabs = prevTabs.filter((t) => t.threadId !== threadIdToClose);
+
+      if (currentThreadId === threadIdToClose) {
+        if (nextTabs.length > 0) {
+          const nextIdx = Math.max(0, Math.min(idx, nextTabs.length - 1));
+          const target = nextTabs[nextIdx];
+          if (target.threadId) {
+            selectSession(target.threadId, target.projectId);
+          } else {
+            startNewChat(target.projectId);
+          }
+        } else {
+          startNewChat();
+        }
+      }
+      return nextTabs;
+    });
+  }, [currentThreadId, selectSession, startNewChat]);
 
   // Load Older Messages on scroll
   const loadOlderMessages = useCallback(async (threadId = currentThreadId) => {
@@ -500,6 +633,8 @@ export function ChatProvider({ children }) {
       return next;
     });
 
+    setOpenTabs((prev) => prev.filter((t) => t.threadId !== threadId));
+
     if (currentThreadId === threadId) {
       startNewChat();
     }
@@ -508,14 +643,7 @@ export function ChatProvider({ children }) {
   // Send Message & Stream
   const sendMessage = useCallback(async (text) => {
     const cleanText = (text || '').trim();
-    if (!cleanText || isStreaming) return;
-
-    setIsStreaming(true);
-    setIsAiResponding(true);
-    setErrorMessage(null);
-    setActiveStreamContent('');
-    setActiveThinkingContent('');
-    setActiveSpeechExplanation(null);
+    if (!cleanText) return;
 
     let sessionThreadId = currentThreadId;
     const isNewSession = !sessionThreadId;
@@ -526,13 +654,48 @@ export function ChatProvider({ children }) {
       setCurrentThread(sessionThreadId);
     }
 
+    if (activeStreams[sessionThreadId]?.isStreaming) return;
+
     const userMsg = { type: 'human', content: cleanText };
     setMessages(prev => ({
       ...prev,
       [sessionThreadId]: [...(prev[sessionThreadId] || []), userMsg],
     }));
 
-    abortControllerRef.current = new AbortController();
+    setOpenTabs((prev) => {
+      const hasNull = prev.some((t) => t.threadId === null);
+      if (hasNull) {
+        return prev.map((t) =>
+          t.threadId === null
+            ? { ...t, threadId: sessionThreadId, title: cleanText.slice(0, 32), projectId: activeProjectId }
+            : t
+        );
+      }
+      const exists = prev.some((t) => t.threadId === sessionThreadId);
+      if (!exists) {
+        return [
+          ...prev,
+          { threadId: sessionThreadId, projectId: activeProjectId, title: cleanText.slice(0, 32) },
+        ];
+      }
+      return prev;
+    });
+
+    const abortCtrl = new AbortController();
+    abortControllersRef.current[sessionThreadId] = abortCtrl;
+
+    setActiveStreams(prev => ({
+      ...prev,
+      [sessionThreadId]: {
+        isStreaming: true,
+        isAiResponding: true,
+        streamContent: '',
+        thinkingContent: '',
+        speechExplanation: null,
+      },
+    }));
+
+    setErrorMessage(null);
 
     let streamAccumulatedAi = '';
     let streamAccumulatedThinking = '';
@@ -548,13 +711,24 @@ export function ChatProvider({ children }) {
         skillsMode,
         skillsList,
         permissionMode,
-        signal: abortControllerRef.current.signal,
+        signal: abortCtrl.signal,
       })) {
         const incomingSessionId = data.session_id || data.thread_id;
         if (incomingSessionId && incomingSessionId !== sessionThreadId) {
           const prevId = sessionThreadId;
           sessionThreadId = incomingSessionId;
           setCurrentThread(incomingSessionId);
+          abortControllersRef.current[incomingSessionId] = abortCtrl;
+          delete abortControllersRef.current[prevId];
+
+          setOpenTabs((prev) =>
+            prev.map((t) => (t.threadId === prevId ? { ...t, threadId: incomingSessionId } : t))
+          );
+          setActiveStreams(prev => {
+            const next = { ...prev, [incomingSessionId]: prev[prevId] || {} };
+            delete next[prevId];
+            return next;
+          });
           setMessages(prev => {
             const existing = prev[prevId] || [];
             const updated = { ...prev, [incomingSessionId]: existing };
@@ -572,7 +746,13 @@ export function ChatProvider({ children }) {
           }
 
           if (data.type === 'permission_request') {
-            setIsAiResponding(false);
+            setActiveStreams(prev => ({
+              ...prev,
+              [sessionThreadId]: {
+                ...(prev[sessionThreadId] || {}),
+                isAiResponding: false,
+              },
+            }));
             const reqItem = {
               ...data,
               session_id: data.session_id || sessionThreadId,
@@ -586,26 +766,44 @@ export function ChatProvider({ children }) {
 
           if (data.type === 'speech_explanation') {
             speechExpl = data.content;
-            setActiveSpeechExplanation(data.content);
+            setActiveStreams(prev => ({
+              ...prev,
+              [sessionThreadId]: {
+                ...(prev[sessionThreadId] || {}),
+                speechExplanation: data.content,
+              },
+            }));
             continue;
           }
 
-          setIsAiResponding(false);
-
           if (data.type === 'text_delta') {
             streamAccumulatedAi += data.content;
-            setActiveStreamContent(streamAccumulatedAi);
+            setActiveStreams(prev => ({
+              ...prev,
+              [sessionThreadId]: {
+                ...(prev[sessionThreadId] || {}),
+                isStreaming: true,
+                isAiResponding: false,
+                streamContent: streamAccumulatedAi,
+              },
+            }));
           } else if (data.type === 'thinking_delta') {
             streamAccumulatedThinking += data.content;
-            setActiveThinkingContent(streamAccumulatedThinking);
+            setActiveStreams(prev => ({
+              ...prev,
+              [sessionThreadId]: {
+                ...(prev[sessionThreadId] || {}),
+                isStreaming: true,
+                isAiResponding: false,
+                thinkingContent: streamAccumulatedThinking,
+              },
+            }));
           } else if (data.type === 'tool_result' || data.type === 'tool') {
-            // Commit any partial AI text or thinking first
             if (streamAccumulatedAi || streamAccumulatedThinking) {
               const pendingItems = [];
               if (streamAccumulatedThinking) {
                 pendingItems.push({ type: 'thinking', content: streamAccumulatedThinking });
                 streamAccumulatedThinking = '';
-                setActiveThinkingContent('');
               }
               if (streamAccumulatedAi) {
                 pendingItems.push({
@@ -615,8 +813,6 @@ export function ChatProvider({ children }) {
                 });
                 streamAccumulatedAi = '';
                 speechExpl = null;
-                setActiveStreamContent('');
-                setActiveSpeechExplanation(null);
               }
               if (pendingItems.length > 0) {
                 setMessages(prev => ({
@@ -625,6 +821,16 @@ export function ChatProvider({ children }) {
                 }));
               }
             }
+
+            setActiveStreams(prev => ({
+              ...prev,
+              [sessionThreadId]: {
+                ...(prev[sessionThreadId] || {}),
+                streamContent: '',
+                thinkingContent: '',
+                isAiResponding: true,
+              },
+            }));
 
             const toolItem = {
               type: 'tool',
@@ -640,9 +846,7 @@ export function ChatProvider({ children }) {
               ...prev,
               [sessionThreadId]: [...(prev[sessionThreadId] || []), toolItem],
             }));
-            setIsAiResponding(true);
           } else if (data.type === 'tool_result_content') {
-            // Update the matching tool message with its result content
             setMessages(prev => {
               const currentList = prev[sessionThreadId] || [];
               const updatedList = [...currentList];
@@ -681,10 +885,8 @@ export function ChatProvider({ children }) {
               ...prev,
               [sessionThreadId]: [...(prev[sessionThreadId] || []), data],
             }));
-            setIsAiResponding(true);
           }
         } else if (event === 'done') {
-          setIsAiResponding(false);
           const threadChanged = data.thread_id && data.thread_id !== sessionThreadId;
           const finalThreadId = threadChanged ? data.thread_id : sessionThreadId;
           if (threadChanged) {
@@ -711,9 +913,12 @@ export function ChatProvider({ children }) {
             }));
           }
 
-          setActiveStreamContent('');
-          setActiveThinkingContent('');
-          setActiveSpeechExplanation(null);
+          setActiveStreams(prev => {
+            const next = { ...prev };
+            delete next[finalThreadId];
+            delete next[sessionThreadId];
+            return next;
+          });
 
           if (isNewSession || threadChanged) {
             if (activeProjectId) {
@@ -729,12 +934,15 @@ export function ChatProvider({ children }) {
         setErrorMessage(err.message || 'Failed to communicate with agent server');
       }
     } finally {
-      setIsAiResponding(false);
-      setIsStreaming(false);
-      abortControllerRef.current = null;
+      delete abortControllersRef.current[sessionThreadId];
+      setActiveStreams(prev => {
+        const next = { ...prev };
+        delete next[sessionThreadId];
+        return next;
+      });
     }
   }, [
-    isStreaming,
+    activeStreams,
     currentThreadId,
     activeProjectId,
     speechExplanation,
@@ -746,14 +954,17 @@ export function ChatProvider({ children }) {
     loadProjectSessions,
   ]);
 
-  const stopStream = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+  const stopStream = useCallback((targetThreadId = currentThreadId) => {
+    if (targetThreadId && abortControllersRef.current[targetThreadId]) {
+      abortControllersRef.current[targetThreadId].abort();
+      delete abortControllersRef.current[targetThreadId];
     }
-    setIsStreaming(false);
-    setIsAiResponding(false);
-  }, []);
+    setActiveStreams(prev => {
+      const next = { ...prev };
+      delete next[targetThreadId];
+      return next;
+    });
+  }, [currentThreadId]);
 
   // Initial mount
   useEffect(() => {
@@ -772,6 +983,9 @@ export function ChatProvider({ children }) {
     loadingProjects,
     projectSessions,
     currentThreadId,
+    openTabs,
+    closeTab,
+    activeStreams,
     messages,
     sessionCursors,
     isLoadingOlder,
