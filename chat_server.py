@@ -25,7 +25,7 @@ HOST = "0.0.0.0"
 PORT = 8225
 
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "97f5482590888eaa0afe9e173babd87c9abae1f5")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8000")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8083/anthropic")
 
 # Cache HTML frontends at module load time
 _HTML_PATH = Path(__file__).parent / "index.html"
@@ -111,42 +111,61 @@ def _read_sdk_history(
 ) -> tuple[list[dict], int | None]:
     """Read conversation history from SDK JSONL file.
 
-    Supports cursor-based pagination: start_offset is a byte position to seek to,
-    and limit is the number of logical messages per page. Returns next_cursor
-    (byte offset after the last line read) or None if EOF.
+    Returns messages in chronological order (oldest first), suitable for a chat UI.
 
-    Speech explanations (StructuredOutput) are attached to
-    their corresponding AI messages via the speech_explanation field.
+    - First load (cursor=None): returns the most recent `limit` messages.
+      next_cursor = byte offset of the first message in that page.
+    - Load more (cursor=<byte>): returns `limit` messages BEFORE that byte position.
+      next_cursor = byte offset of the first message in that page, or None if at the start.
     """
     project_key = _sdk_project_key(workspace)
     jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
     if not jsonl_path.exists():
         return [], None
 
-    messages = []
-    pending_tool_calls: dict[str, dict] = {}  # assistant_uuid -> {name, input}
+    # Read full file and build entries with byte positions
+    with open(jsonl_path, "rb") as f:
+        raw = f.read()
+    lines = raw.split(b"\n")
+    entries: list[tuple[int, dict]] = []
+    pos = 0
+    for line in lines:
+        if line.strip():
+            try:
+                entries.append((pos, json.loads(line.decode("utf-8", errors="replace"))))
+            except Exception:
+                pass
+        pos += len(line) + 1
+
+    if not entries:
+        return [], None
+
+    pending_tool_calls: dict[str, dict] = {}
     pending_speech_explanation: str | None = None
 
-    msg_count = 0
-    next_byte_offset: int | None = None
+    def parse_entries(
+        ents: list[tuple[int, dict]],
+    ) -> tuple[list[dict], list[int]]:
+        """Parse entries into logical messages and track each message's source byte offset.
 
-    with open(jsonl_path, "rb") as f:
-        f.seek(start_offset)
-        for line in f:
-            line_text = line.decode("utf-8", errors="replace").strip()
-            if not line_text:
-                continue
-            try:
-                entry = json.loads(line_text)
-            except Exception:
-                continue
+        Returns (messages, byte_offsets) where byte_offsets[i] is the byte_pos of
+        entries[i]. Each logical message (human, ai, thinking, tool) gets the byte
+        offset of its parent entry.
 
+        byte_offsets is built in parallel with messages by counting how many messages
+        each entry produces, so they always stay in sync.
+        """
+        messages: list[dict] = []
+        byte_offsets: list[int] = []
+        pending_tool_calls.clear()
+        pending_speech_explanation = None
+
+        for byte_pos, entry in ents:
             entry_type = entry.get("type", "")
 
             if entry_type == "user":
                 msg = entry.get("message", {})
                 msg_content = msg.get("content", [])
-                # Normalize string content to list format
                 if isinstance(msg_content, str):
                     msg_content = [{"type": "text", "text": msg_content}]
                 if isinstance(msg_content, list):
@@ -171,7 +190,6 @@ def _read_sdk_history(
                                     tool_call = pending_tool_calls.pop(source_uuid)
                                     tool_name = tool_call["name"]
                                     if tool_name == "StructuredOutput":
-                                        # Attach speech explanation to the last AI message
                                         try:
                                             parsed = json.loads(tool_result)
                                             explanation = parsed.get("explanation", "") if isinstance(parsed, dict) else ""
@@ -189,13 +207,13 @@ def _read_sdk_history(
                                             "input": tool_call["input"],
                                             "content": tool_result,
                                         })
-                                        msg_count += 1
+                                        byte_offsets.append(byte_pos)
                     else:
                         texts = [c.get("text", "") for c in msg_content if c.get("type") == "text"]
                         human_text = "".join(texts)
                         if human_text and not human_text.startswith("[structured-output-enforce]") and not human_text.startswith("Stop hook feedback:"):
                             messages.append({"type": "human", "content": human_text})
-                            msg_count += 1
+                            byte_offsets.append(byte_pos)
 
             elif entry_type == "assistant":
                 msg = entry.get("message", {})
@@ -207,7 +225,6 @@ def _read_sdk_history(
                         if block.get("type") == "text":
                             texts.append(block.get("text", ""))
                         elif block.get("type") == "tool_use":
-                            # Capture non-StructuredOutput tool calls
                             tool_name = block.get("name")
                             tool_input = block.get("input", {})
                             assistant_uuid = entry.get("uuid")
@@ -221,18 +238,41 @@ def _read_sdk_history(
                     if texts:
                         ai_msg = {"type": "ai", "content": "".join(texts)}
                         messages.append(ai_msg)
-                        msg_count += 1
+                        byte_offsets.append(byte_pos)
                     if thinking_content:
                         messages.append({"type": "thinking", "content": thinking_content})
-                        msg_count += 1
+                        byte_offsets.append(byte_pos)
 
-            # Track byte offset of next line (current position after reading this line)
-            next_byte_offset = f.tell()
+        return messages, byte_offsets
 
-            # Stop after limit complete logical messages
-            if limit is not None and msg_count >= limit:
-                break
-    return messages, next_byte_offset
+    if limit is None:
+        messages, _ = parse_entries(entries)
+        return messages, None
+
+    # --- First load (no cursor): return most recent `limit` messages ---
+    if start_offset == 0:
+        all_messages, all_byte_offsets = parse_entries(entries)
+        if len(all_messages) <= limit:
+            return all_messages, None
+
+        # Find the byte offset of the message at index [len - limit]
+        first_msg_in_recent = len(all_messages) - limit
+        first_byte = all_byte_offsets[first_msg_in_recent]
+        return all_messages[-limit:], first_byte
+
+    # --- Load more (cursor provided): return `limit` messages BEFORE cursor ---
+    older_entries = [(bp, e) for bp, e in entries if bp < start_offset]
+    if not older_entries:
+        return [], None
+
+    older_messages, older_byte_offsets = parse_entries(older_entries)
+
+    if len(older_messages) <= limit:
+        return older_messages, None  # reached the beginning
+
+    first_msg_in_page = len(older_messages) - limit
+    first_byte = older_byte_offsets[first_msg_in_page]
+    return older_messages[-limit:], first_byte
 
 
 
@@ -264,7 +304,7 @@ SYSTEM_PROMPT_EXPLANATION_SCHEMA = {
     },
 }
 
-# Read-only tool set applied when permission_mode == "plan". These tools are the
+# Read-only tool set applied when permission_mode == "read_only". These tools are the
 # only ones available to the agent (no write/executable tool can be called), and
 # they run with no approval prompt (see allowed_tools below).
 _READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "WebFetch", "WebSearch"]
@@ -276,14 +316,14 @@ def _build_options(
     system_prompt: str | None = None,
     setting_sources: list[SettingSource] | None = None,
     skills: list[str] | Literal["all"] | None = None,
-    permission_mode: Literal["plan", "bypassPermissions"] | None = None,
+    permission_mode: Literal["read_only", "bypassPermissions"] | None = None,
 ) -> ClaudeAgentOptions:
-    # "plan" (read-only) is enforced via a tool whitelist rather than the SDK's
-    # plan semantics: run on default permission checks but only expose the
+    # "read_only" (read-only) is enforced via a tool whitelist rather than the SDK's
+    # read_only semantics: run on default permission checks but only expose the
     # read-only tools so no write/executable tool can ever be called.
-    read_only = permission_mode == "plan"
+    read_only = permission_mode == "read_only"
     opts = ClaudeAgentOptions(
-        model="ornith-1.5",
+        model="Minimax-M2.7",
         system_prompt=system_prompt,
         env={
             "ANTHROPIC_API_KEY": LLM_API_KEY,
@@ -321,8 +361,8 @@ class ChatRequest(BaseModel):
     """Control which filesystem settings to load. null = SDK defaults (all sources)."""
     skills: list[str] | Literal["all"] | None = None
     """Skills to enable. null = SDK defaults, [] = no skills, 'all' = all discovered skills."""
-    permission_mode: Literal["plan", "bypassPermissions"] | None = None
-    """Permission mode. 'plan' = read-only, 'bypassPermissions' = full access, null = SDK defaults."""
+    permission_mode: Literal["read_only", "bypassPermissions"] | None = None
+    """Permission mode. 'read_only' = read-only (tool whitelist), 'bypassPermissions' = full access, null = SDK defaults."""
 
 
 class WorkspaceSelectRequest(BaseModel):
@@ -615,6 +655,12 @@ async def chat(request: ChatRequest):
         pending_tools: dict[int, dict] = {}
         turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
+        # Remember JSONL file size before this turn so we can read only new entries
+        # after the turn completes to get actual tool result content
+        project_key = _sdk_project_key(workspace)
+        jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
+        jsonl_size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
+
         try:
             # Reuse cached client only when no custom config is passed — custom opts
             # (skills, setting_sources, permission_mode) must be fresh per request
@@ -738,6 +784,48 @@ async def chat(request: ChatRequest):
                             })
                     except Exception as e:
                         print(f"[WARN] get_context_usage failed: {e}")
+
+                    # Read new JSONL entries after this turn to get actual tool result content.
+                    # The SSE only streams tool input (args), not result content — supplement from JSONL.
+                    if jsonl_path.exists():
+                        with open(jsonl_path, "rb") as f:
+                            f.seek(jsonl_size_before)
+                            new_bytes = f.read()
+                        if new_bytes.strip():
+                            for line in new_bytes.split(b"\n"):
+                                if not line.strip():
+                                    continue
+                                try:
+                                    entry = json.loads(line.decode("utf-8", errors="replace"))
+                                except Exception:
+                                    continue
+                                if entry.get("type") != "user":
+                                    continue
+                                msg_content = entry.get("message", {}).get("content", [])
+                                if not isinstance(msg_content, list):
+                                    continue
+                                for block in msg_content:
+                                    if block.get("type") != "tool_result":
+                                        continue
+                                    tool_result = block.get("content", "")
+                                    text_parts = []
+                                    if isinstance(tool_result, list):
+                                        for item in tool_result:
+                                            if isinstance(item, dict):
+                                                if item.get("type") == "text":
+                                                    text_parts.append(item.get("text", ""))
+                                    content = "".join(text_parts) if text_parts else str(tool_result)
+                                    # Skip StructuredOutput results — speech_explanation already emitted
+                                    source_uuid = entry.get("sourceToolAssistantUUID", "")
+                                    if source_uuid in pending_tools and pending_tools[source_uuid].get("name") == "StructuredOutput":
+                                        continue
+                                    if content:
+                                        yield format_sse("message", {
+                                            "type": "tool_result_content",
+                                            "tool_id": source_uuid,
+                                            "content": content,
+                                        })
+                                pending_tools.clear()
 
                     yield format_sse("done", {
                         "thread_id": session_id,

@@ -1,0 +1,130 @@
+import React from 'react';
+import { useChat } from '../../context/ChatContext';
+import SessionItem from './SessionItem';
+
+export default function ProjectItem({ project }) {
+  const {
+    activeProjectId,
+    expandedProjects,
+    loadingProjects,
+    projectSessions,
+    toggleProject,
+    deleteProject,
+    startNewChat,
+    loadProjectSessions,
+  } = useChat();
+
+  const isExpanded = expandedProjects.has(project.id);
+  const isActive = activeProjectId === project.id;
+  const isLoading = loadingProjects.has(project.id);
+  const sessions = projectSessions[project.id] || [];
+
+  const handleHeaderClick = (e) => {
+    if (e.target.closest('.delete-project-btn') || e.target.closest('.project-new-chat-btn')) return;
+    toggleProject(project.id);
+  };
+
+  const handleNewChat = (e) => {
+    e.stopPropagation();
+    toggleProject(project.id);
+    startNewChat();
+  };
+
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    if (window.confirm('Remove this project from sidebar tracking? (Files and conversations will be preserved)')) {
+      deleteProject(project.id);
+    }
+  };
+
+  return (
+    <div
+      className={`project-card rounded-xl border transition-all ${
+        isActive ? 'bg-dark-surface/60 border-dark-border' : 'border-transparent hover:border-dark-border/40'
+      }`}
+    >
+      <div
+        onClick={handleHeaderClick}
+        className="project-header group px-2.5 py-2 rounded-xl cursor-pointer flex items-center justify-between hover:bg-dark-elevated/40 transition-colors"
+      >
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <svg
+            className={`project-chevron w-3.5 h-3.5 text-txt-subtle transition-transform duration-200 shrink-0 ${
+              isExpanded ? 'rotate-90 text-brand' : ''
+            }`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="font-medium text-xs text-white truncate" title={project.path}>
+            {project.name}
+          </span>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={handleNewChat}
+            className="project-new-chat-btn opacity-0 group-hover:opacity-100 p-1 hover:text-brand text-txt-subtle transition-opacity cursor-pointer"
+            title={`New conversation in ${project.name}`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="delete-project-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 text-txt-subtle transition-opacity cursor-pointer"
+            title="Remove project from tracking"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <>
+          {isLoading ? (
+            <div className="py-2.5 px-4 text-center text-[10px] text-txt-subtle font-mono flex items-center justify-center gap-1.5">
+              <svg className="w-3 h-3 animate-spin text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
+              <span>Loading conversations...</span>
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="py-2 px-5 text-[10px] text-txt-subtle italic flex items-center justify-between">
+              <span>No conversations yet</span>
+              <button
+                type="button"
+                onClick={handleNewChat}
+                className="project-new-chat-btn text-[10px] text-brand hover:text-brand-hover font-medium underline cursor-pointer"
+              >
+                Start chat
+              </button>
+            </div>
+          ) : (
+            <div className="pl-3 pr-1 py-1 space-y-0.5 border-l border-dark-border/40 ml-3.5 my-1">
+              {sessions.map((s) => (
+                <SessionItem key={s.thread_id} session={s} projectId={project.id} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

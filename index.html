@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+  <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
@@ -73,22 +73,22 @@
 
     /* Custom Matching Scrollbar */
     ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
+      width: 10px;
+      height: 10px;
     }
     ::-webkit-scrollbar-track {
       background: transparent;
     }
     ::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.28);
       border-radius: 9999px;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: rgba(241, 105, 19, 0.5);
+      background: rgba(241, 105, 19, 0.7);
     }
     * {
       scrollbar-width: thin;
-      scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+      scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
     }
 
     /* Markdown styling inside assistant messages */
@@ -431,6 +431,7 @@
       messages: {},
       sessionCursors: {},
       isLoadingOlder: {},
+      isSelectingSession: false,
       speechExplanation: localStorage.getItem('qa-speech-explanation') === 'true',
       settingSources: getInitialSettingSources(),
       skillsMode: localStorage.getItem('qa-skills-mode') === 'all' ? 'default' : (localStorage.getItem('qa-skills-mode') || 'default'),
@@ -929,9 +930,11 @@
       wrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0 my-2';
 
       const toolName = tool.name || tool.tool_name || 'Tool';
-      const inputCmd = tool.input?.command ? `$ ${tool.input.command}` : '';
-      const inputDesc = tool.input?.description || inputCmd || '';
-      const inputObj = tool.input || null;
+      const inputObj = tool.input || tool.args || null;
+      const inputCmd = inputObj?.command ? `$ ${inputObj.command}` : '';
+      const inputFilePath = inputObj?.file_path || inputObj?.path || '';
+      const inputPattern = inputObj?.pattern || inputObj?.query || '';
+      const inputDesc = inputObj?.description || inputCmd || inputFilePath || inputPattern || '';
       const rawOutput = tool.content ?? tool.output ?? tool.result ?? '';
       const outputText = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput, null, 2);
 
@@ -1215,6 +1218,7 @@
       state.contextUsage = null;
       updateContextBar(null);
 
+      state.isSelectingSession = true;
       el.messagesContainer.innerHTML = '';
       showLoadingIndicator();
 
@@ -1229,9 +1233,18 @@
           state.sessionCursors[threadId] = data.next_cursor !== undefined ? data.next_cursor : null;
 
           renderCurrentSessionView(threadId);
-          scrollToBottom();
+          el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+          requestAnimationFrame(() => {
+            el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+            setTimeout(() => {
+              state.isSelectingSession = false;
+            }, 150);
+          });
+        } else {
+          state.isSelectingSession = false;
         }
       } catch (e) {
+        state.isSelectingSession = false;
         hideLoadingIndicator();
         showError('Failed to load session messages from server.');
       }
@@ -1447,12 +1460,32 @@
               activeAiWrapper = null;
               activeAiTextEl = null;
               activeThinkingTextEl = null;
+              const toolItem = {
+                type: 'tool',
+                name: data.tool_name || data.name || 'Tool',
+                tool_name: data.tool_name || data.name || 'Tool',
+                tool_id: data.tool_id || data.id,
+                input: data.args || data.input || {},
+                args: data.args || data.input || {},
+                content: data.content ?? data.output ?? data.result ?? '',
+              };
               if (!state.messages[state.currentThreadId]) {
                 state.messages[state.currentThreadId] = [];
               }
-              state.messages[state.currentThreadId].push(data);
-              renderToolCallNode(data);
+              state.messages[state.currentThreadId].push(toolItem);
+              renderToolCallNode(toolItem);
               showLoadingIndicator();
+            }
+            else if (data.type === 'tool_result_content') {
+              if (state.messages[state.currentThreadId]) {
+                const list = state.messages[state.currentThreadId];
+                for (let i = list.length - 1; i >= 0; i--) {
+                  if (list[i].type === 'tool' || list[i].type === 'tool_result') {
+                    list[i].content = data.content;
+                    break;
+                  }
+                }
+              }
             }
             else {
               activeAiWrapper = null;
@@ -1597,7 +1630,9 @@
 
     el.messagesContainer?.addEventListener('scroll', () => {
       if (
+        !state.isSelectingSession &&
         el.messagesContainer.scrollTop <= 60 &&
+        el.messagesContainer.scrollHeight > el.messagesContainer.clientHeight + 100 &&
         state.currentThreadId &&
         state.sessionCursors[state.currentThreadId] &&
         !state.isLoadingOlder[state.currentThreadId]
@@ -1682,7 +1717,7 @@
               </div>
               <div class="grid grid-cols-3 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[11px] font-medium">
                 <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'default' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="default">Default</button>
-                <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'plan' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="plan">Read-Only</button>
+                <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'read_only' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="read_only">Read-Only</button>
                 <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'bypassPermissions' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="bypassPermissions">Full Access</button>
               </div>
               <div id="perm-desc" class="text-[10px] text-txt-subtle font-mono"></div>
@@ -1757,7 +1792,7 @@
       const updatePermDesc = () => {
         const val = state.permissionMode;
         if (!val) permDescEl.textContent = 'null (SDK Default: Standard tool permission checks)';
-        else if (val === 'plan') permDescEl.textContent = '"plan" (Read-only: Read, Glob, Grep only)';
+        else if (val === 'read_only') permDescEl.textContent = '"read_only" (Read-only: Read, Glob, Grep only)';
         else if (val === 'bypassPermissions') permDescEl.textContent = '"bypassPermissions" (Full Access: All tool checks bypassed)';
       };
       updatePermDesc();
