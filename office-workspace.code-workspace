@@ -14,7 +14,18 @@
 		},
 		{
 			"path": "../ocr-pipeline"
+		},
+		{
+			"path": "../auto-data-intelligence"
+		},
+		{
+			"path": "../ornith_1_5_quality_testing"
+		},
+		{
+			"path": "../anthropic_routing_gateway"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "ornith_1_5_quality_testing"
+	}
 }

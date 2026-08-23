@@ -19,7 +19,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk import ResultMessage, StreamEvent, list_sessions as sdk_list_sessions
 from claude_agent_sdk.types import SettingSource
 
-from schemas import ContentBlock, AgentResponse, EnrichedContentBlock
+from schemas import Project, ProjectCreate, ProjectsListResponse, ProjectSessionsResponse, SessionResponse
 
 HOST = "0.0.0.0"
 PORT = 8225
@@ -103,77 +103,29 @@ def _sdk_project_key(workspace: str) -> str:
     return "-" + os.path.realpath(workspace).lstrip("/").replace("/", "-")
 
 
-def _read_sdk_history(workspace: str, session_id: str) -> list[dict]:
-    """Read conversation history from SDK JSONL file.
-
-    session_id IS the SDK session_id — SDK stores at
-    ~/.claude/projects/<project-key>/<session_id>.jsonl
-    """
-    project_key = _sdk_project_key(workspace)
-    jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
-    if not jsonl_path.exists():
-        return []
-
-    messages = []
-    with open(jsonl_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except Exception:
-                continue
-
-            entry_type = entry.get("type", "")
-            if entry_type == "user":
-                msg = entry.get("message", {})
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    messages.append({"type": "human", "content": content})
-                elif isinstance(content, list):
-                    texts = [c.get("text", "") for c in content if c.get("type") == "text"]
-                    if texts:
-                        messages.append({"type": "human", "content": "".join(texts)})
-
-            elif entry_type == "assistant":
-                msg = entry.get("message", {})
-                content = msg.get("content", [])
-                if isinstance(content, list):
-                    texts = []
-                    for block in content:
-                        if block.get("type") == "text":
-                            texts.append(block.get("text", ""))
-                        elif block.get("type") == "thinking":
-                            pass  # skip thinking
-                    if texts:
-                        messages.append({"type": "ai", "content": "".join(texts)})
-    return messages
-
-
-def _read_sdk_history_and_blocks(
+def _read_sdk_history(
     workspace: str,
     session_id: str,
     start_offset: int = 0,
     limit: int | None = None,
-) -> tuple[list[dict], list[dict], int | None]:
-    """Read conversation history and enriched blocks from SDK JSONL file.
+) -> tuple[list[dict], int | None]:
+    """Read conversation history from SDK JSONL file.
 
     Supports cursor-based pagination: start_offset is a byte position to seek to,
     and limit is the number of logical messages per page. Returns next_cursor
     (byte offset after the last line read) or None if EOF.
 
-    SDK stores structured output as:
-      {type: "assistant", message: {content: [{type: "tool_use", name: "StructuredOutput", input: {blocks: [...]}}]}}
+    Speech explanations (StructuredOutput) are attached to
+    their corresponding AI messages via the speech_explanation field.
     """
     project_key = _sdk_project_key(workspace)
     jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
     if not jsonl_path.exists():
-        return [], [], None
+        return [], None
 
     messages = []
-    enriched_blocks = []
     pending_tool_calls: dict[str, dict] = {}  # assistant_uuid -> {name, input}
+    pending_speech_explanation: str | None = None
 
     msg_count = 0
     next_byte_offset: int | None = None
@@ -217,13 +169,27 @@ def _read_sdk_history_and_blocks(
                                 source_uuid = entry.get("sourceToolAssistantUUID")
                                 if source_uuid and source_uuid in pending_tool_calls:
                                     tool_call = pending_tool_calls.pop(source_uuid)
-                                    messages.append({
-                                        "type": "tool",
-                                        "name": tool_call["name"],
-                                        "input": tool_call["input"],
-                                        "content": tool_result,
-                                    })
-                                    msg_count += 1
+                                    tool_name = tool_call["name"]
+                                    if tool_name == "StructuredOutput":
+                                        # Attach speech explanation to the last AI message
+                                        try:
+                                            parsed = json.loads(tool_result)
+                                            explanation = parsed.get("explanation", "") if isinstance(parsed, dict) else ""
+                                        except (json.JSONDecodeError, TypeError):
+                                            explanation = str(tool_result)
+                                        if explanation:
+                                            pending_speech_explanation = explanation
+                                            if messages and messages[-1]["type"] == "ai":
+                                                messages[-1]["speech_explanation"] = pending_speech_explanation
+                                                pending_speech_explanation = None
+                                    else:
+                                        messages.append({
+                                            "type": "tool",
+                                            "name": tool_name,
+                                            "input": tool_call["input"],
+                                            "content": tool_result,
+                                        })
+                                        msg_count += 1
                     else:
                         texts = [c.get("text", "") for c in msg_content if c.get("type") == "text"]
                         human_text = "".join(texts)
@@ -240,21 +206,6 @@ def _read_sdk_history_and_blocks(
                     for block in msg_content:
                         if block.get("type") == "text":
                             texts.append(block.get("text", ""))
-                        elif block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
-                            input_data = block.get("input", {})
-                            raw_blocks = input_data.get("blocks", [])
-                            if raw_blocks:
-                                try:
-                                    from schemas import ContentBlock
-                                    content_blocks = [ContentBlock(**b) for b in raw_blocks]
-                                    enriched = _enrich_blocks(content_blocks)
-                                    parent_uuid = entry.get("uuid")
-                                    for b in enriched:
-                                        block_dict = b.model_dump()
-                                        block_dict["parentUuid"] = parent_uuid
-                                        enriched_blocks.append(block_dict)
-                                except Exception as e:
-                                    print(f"[WARN] Failed to parse StructuredOutput blocks: {e}")
                         elif block.get("type") == "tool_use":
                             # Capture non-StructuredOutput tool calls
                             tool_name = block.get("name")
@@ -268,7 +219,8 @@ def _read_sdk_history_and_blocks(
                         elif block.get("type") == "thinking":
                             thinking_content = block.get("thinking", "")
                     if texts:
-                        messages.append({"type": "ai", "content": "".join(texts)})
+                        ai_msg = {"type": "ai", "content": "".join(texts)}
+                        messages.append(ai_msg)
                         msg_count += 1
                     if thinking_content:
                         messages.append({"type": "thinking", "content": thinking_content})
@@ -280,26 +232,37 @@ def _read_sdk_history_and_blocks(
             # Stop after limit complete logical messages
             if limit is not None and msg_count >= limit:
                 break
-        else:
-            next_byte_offset = None
-
-    return messages, enriched_blocks, next_byte_offset
+    return messages, next_byte_offset
 
 
 
 
-BLOCKS_MODE_SYSTEM_PROMPT = """When responding in blocks mode using the StructuredOutput tool:
-- Call StructuredOutput ONCE with all your content as blocks
-- Do NOT generate any text before, after, or alongside the StructuredOutput tool call
-- The StructuredOutput tool call IS your complete response — nothing else should follow
+SPEECH_EXPLANATION_SYSTEM_PROMPT = """After your response, produce a StructuredOutput with a detailed spoken explanation — as if you're tutoring someone through the entire response, section by section.
 
-About spoken_explanation:
-- Only include spoken_explanation when the content genuinely needs explanation
-- Leave spoken_explanation EMPTY ("") for: plain headings, single words, short phrases, simple lists with obvious items, or anything self-explanatory
-- ALWAYS include spoken_explanation for: code snippets, tables, flowcharts/diagrams, complex concepts, technical terms, or anything a listener would need context to understand
-- When you DO explain, be substantive: use real examples, analogies, or concrete use-cases. Do NOT just rephrase the markdown as a sentence. An explanation should add information the markdown itself does not convey
-- Example of a BAD explanation: "This is a table showing the four main types of machine learning" — it merely names what is already visible
-- Example of a GOOD explanation: 'Supervised learning is like teaching with flashcards — you know the right answer for each card. It is used in spam filters that learn from thousands of labeled emails to predict whether new ones are junk.'"""
+Walk through the same topics your response covered, with the same depth. Do not distill or skip details. For each concept, explain the "why" behind it, use analogies to make it click, and give concrete examples. Imagine you're on a call with someone who read your response and wants you to walk them through it properly — that's this explanation.
+
+Structure your explanation to mirror your response's flow:
+- Start with the core concept or main idea, explained fully
+- Walk through each section or sub-topic your response covered, in order
+- For each section: explain the key ideas, not just what it is but what it means and why it matters
+- Use everyday analogies wherever something abstract is introduced
+- End with why this matters or how it connects to the bigger picture
+
+Do NOT just restate your response in fewer words. Do NOT narrate what you did ("I covered...", "I explained..."). The explanation IS the full walkthrough — a student should finish listening and understand everything your response covered."""
+
+SYSTEM_PROMPT_EXPLANATION_SCHEMA = {
+    "type": "json_schema",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "explanation": {
+                "type": "string",
+                "description": "A detailed verbal walkthrough of the entire response, section by section. Covers the same topics with the same depth as the response itself. Written as a tutor explaining to a student — conversational, uses analogies for abstract concepts, walks through every major point the response covered. NOT a summary or TLDR; the full explanation as if spoken aloud during a tutoring session."
+            }
+        },
+        "required": ["explanation"],
+    },
+}
 
 def _build_options(
     workspace: str,
@@ -340,7 +303,8 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: str | None = None
     project_id: int | None = None
-    response_mode: Literal["normal", "blocks"] = "normal"
+    speech_explanation: bool = False
+    """When true, agent generates a speech explanation for each response via StructuredOutput."""
     setting_sources: list[SettingSource] | None = None
     """Control which filesystem settings to load. null = SDK defaults (all sources)."""
     skills: list[str] | Literal["all"] | None = None
@@ -372,7 +336,6 @@ class SessionsListResponse(BaseModel):
 class MessagesResponse(BaseModel):
     session_id: str
     messages: list[dict]
-    enriched_blocks: list[dict] | None = None
     next_cursor: int | None = None
 
 
@@ -463,17 +426,16 @@ async def get_session_messages(
     try:
         uuid.UUID(session_id)
     except ValueError:
-        return MessagesResponse(session_id=session_id, messages=[], enriched_blocks=None)
+        return MessagesResponse(session_id=session_id, messages=[])
 
     ws = _resolve_workspace(project_id)
-    messages, enriched_blocks, next_cursor = _read_sdk_history_and_blocks(
+    messages, next_cursor = _read_sdk_history(
         ws, session_id, start_offset=cursor or 0, limit=limit
     )
 
     return MessagesResponse(
         session_id=session_id,
         messages=messages,
-        enriched_blocks=enriched_blocks if enriched_blocks else None,
         next_cursor=next_cursor,
     )
 
@@ -623,26 +585,23 @@ async def chat(request: ChatRequest):
     session_exists = jsonl_path.exists()
 
     async def event_stream():
-        blocks_mode = request.response_mode == "blocks"
+        speech_mode = request.speech_explanation
         opts = _build_options(
             workspace=workspace,
             session_id=session_id,
             resume=session_exists,
-            system_prompt=BLOCKS_MODE_SYSTEM_PROMPT if blocks_mode else None,
+            system_prompt=SPEECH_EXPLANATION_SYSTEM_PROMPT if speech_mode else None,
             setting_sources=request.setting_sources,
             skills=request.skills,
             permission_mode=request.permission_mode,
         )
 
-        if blocks_mode:
-            opts.output_format = {
-                "type": "json_schema",
-                "schema": AgentResponse.model_json_schema(),
-            }
+        # In speech mode, request structured output for the explanation
+        if speech_mode:
+            opts.output_format = SYSTEM_PROMPT_EXPLANATION_SCHEMA
 
         pending_tools: dict[int, dict] = {}
         turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-        blocks_emitted = False  # guard: suppress text_delta after structured output arrives
 
         try:
             # Reuse cached client only when no custom config is passed — custom opts
@@ -674,7 +633,7 @@ async def chat(request: ChatRequest):
                         delta = evt.get("delta", {})
                         d_type = delta.get("type")
 
-                        if d_type == "text_delta" and not blocks_emitted:
+                        if d_type == "text_delta":
                             yield format_sse("message", {
                                 "type": "text_delta",
                                 "content": delta.get("text", ""),
@@ -730,10 +689,6 @@ async def chat(request: ChatRequest):
                                 "tool_id": tool_data["id"],
                                 "args": args_json,
                             })
-                            # In blocks mode, once StructuredOutput tool result is emitted,
-                            # suppress any subsequent text_delta (model sometimes echoes after tool)
-                            if blocks_mode and tool_data["name"] == "StructuredOutput":
-                                blocks_emitted = True
                         pending_tools.clear()
 
                 # --- ResultMessage ---
@@ -752,6 +707,15 @@ async def chat(request: ChatRequest):
                         turn_usage["output_tokens"] = msg.usage.get("output_tokens", 0)
                         turn_usage["total_tokens"] = msg.usage.get("total_tokens", 0)
 
+                    # In speech mode, extract structured explanation
+                    if speech_mode and msg.structured_output:
+                        explanation = msg.structured_output.get("explanation", "")
+                        if explanation:
+                            yield format_sse("message", {
+                                "type": "speech_explanation",
+                                "content": explanation,
+                            })
+
                     # Get full context usage breakdown via SDK
                     try:
                         ctx = await client.get_context_usage()
@@ -763,58 +727,9 @@ async def chat(request: ChatRequest):
                     except Exception as e:
                         print(f"[WARN] get_context_usage failed: {e}")
 
-                    # Blocks mode: structured output
-                    if blocks_mode:
-                        if not msg.structured_output:
-                            # LLM did not return structured output — emit error and fall back
-                            yield format_sse("error", {
-                                "message": "LLM did not return structured blocks. Falling back to normal mode.",
-                            })
-                            yield format_sse("done", {
-                                "thread_id": session_id,
-                                "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                                "response_mode": "normal",
-                            })
-                            return
-
-                        try:
-                            agent_resp = AgentResponse(**msg.structured_output)
-                        except Exception as e:
-                            yield format_sse("error", {
-                                "message": f"Structured output validation failed: {e}",
-                            })
-                            yield format_sse("done", {
-                                "thread_id": session_id,
-                                "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                                "response_mode": "normal",
-                            })
-                            return
-
-                        enriched = _enrich_blocks(agent_resp.blocks)
-
-                        # Emit content_block SSE events FIRST
-                        for block in enriched:
-                            yield format_sse("message", {
-                                "type": "content_block",
-                                "uuid": block.uuid,
-                                "sequence_id": block.sequence_id,
-                                "markdown": block.markdown,
-                                "spoken_explanation": block.spoken_explanation,
-                            })
-                        blocks_emitted = True
-
-                        yield format_sse("done", {
-                            "thread_id": session_id,
-                            "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                            "response_mode": "blocks",
-                            "block_count": len(enriched),
-                        })
-                        return
-
                     yield format_sse("done", {
                         "thread_id": session_id,
                         "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                        "response_mode": "normal",
                     })
                     return
 
@@ -832,18 +747,6 @@ async def chat(request: ChatRequest):
     )
 
 
-# ============== Block Enrichment Helpers ==============
-
-def _enrich_blocks(blocks: list[ContentBlock]) -> list[EnrichedContentBlock]:
-    return [
-        EnrichedContentBlock(
-            uuid=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{i}:{b.markdown[:200]}")),
-            sequence_id=i + 1,
-            markdown=b.markdown,
-            spoken_explanation=b.spoken_explanation,
-        )
-        for i, b in enumerate(blocks)
-    ]
 
 
 # ============== Main ==============
