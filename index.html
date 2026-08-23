@@ -331,35 +331,61 @@
       <!-- Floating Input Container -->
       <div class="absolute bottom-0 left-0 right-0 z-20 pointer-events-none bg-gradient-to-t from-dark-bg via-dark-bg/85 to-transparent pt-8 pb-3 px-3 sm:pb-4 sm:px-4">
         <div class="w-full max-w-2xl lg:max-w-3xl mx-auto min-w-0">
-          <div class="pointer-events-auto relative rounded-xl bg-dark-surface/95 backdrop-blur-xl border border-dark-border focus-within:border-brand/60 shadow-2xl transition-all duration-150 px-3 py-2">
+
+          <!-- Smart Capsule Card -->
+          <div class="pointer-events-auto relative rounded-2xl bg-dark-surface/95 backdrop-blur-2xl border border-dark-border focus-within:border-brand/60 focus-within:shadow-[0_0_25px_rgba(249,115,22,0.12)] shadow-2xl transition-all duration-200 p-2 sm:p-2.5 flex flex-col gap-1.5">
             
+            <!-- Textarea -->
             <textarea
               id="message-input"
               rows="1"
               placeholder="Type a message or prompt..."
-              class="w-full bg-transparent px-0.5 py-0.5 text-xs sm:text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-32 font-sans leading-relaxed block overflow-y-auto min-h-[22px]"
+              class="w-full bg-transparent text-xs sm:text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-48 font-sans leading-relaxed block overflow-y-auto min-h-[26px] px-1.5 py-1"
             ></textarea>
 
-            <div class="flex items-center justify-between pt-1 mt-0.5 text-[11px] text-txt-subtle">
-              <!-- Left side: Context usage progress bar -->
-              <div id="context-usage-bar" class="hidden items-center gap-1.5 cursor-pointer font-mono text-[11px] select-none text-brand hover:brightness-110 transition-all" onclick="showContextModal()" title="View context breakdown">
-                <span class="text-brand font-bold">[</span>
-                <span id="context-usage-blocks" class="tracking-tight inline-flex leading-none"></span>
-                <span class="text-brand font-bold">]</span>
-                <span id="context-usage-label" class="text-[10px] font-mono text-brand font-medium">0%</span>
-              </div>
-              <div class="flex-1"></div>
+            <!-- Bottom Toolbar -->
+            <div class="flex items-center justify-between gap-2 pt-1 border-t border-dark-border/40">
+              
+              <!-- Left: Context Usage Pill & Voice Mode Toggle Pill -->
+              <div class="flex items-center gap-1.5 min-w-0">
+                <!-- Context Pill -->
+                <button
+                  id="context-usage-pill"
+                  type="button"
+                  class="hidden items-center gap-1.5 px-2 py-0.5 rounded-lg bg-dark-elevated/70 hover:bg-dark-elevated border border-dark-border/60 hover:border-brand/40 text-[11px] font-mono transition-all group shrink-0"
+                  onclick="showContextModal()"
+                  title="View context window breakdown"
+                >
+                  <span id="context-pill-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span id="context-pill-label" class="text-txt-muted group-hover:text-white font-medium">0% context</span>
+                </button>
 
+                <!-- Quick Voice Mode Pill -->
+                <button
+                  id="quick-voice-btn"
+                  type="button"
+                  class="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-sans transition-all border shrink-0"
+                  title="Toggle spoken explanations for AI responses"
+                >
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                  </svg>
+                  <span id="quick-voice-label">Voice</span>
+                </button>
+              </div>
+
+              <!-- Right: Send / Stop Action Button -->
               <button
                 id="send-btn"
                 disabled
                 title="Send message"
-                class="bg-brand hover:bg-brand-hover text-white p-1.5 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-25 disabled:hover:bg-brand shadow-sm active:scale-95 shrink-0"
+                class="bg-brand hover:bg-brand-hover text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-25 disabled:hover:bg-brand shadow-sm active:scale-95 shrink-0"
               >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
                 </svg>
               </button>
+
             </div>
 
           </div>
@@ -447,9 +473,11 @@
       sendBtn: document.getElementById('send-btn'),
       menuToggle: document.getElementById('menu-toggle'),
       settingsBtn: document.getElementById('settings-btn'),
-      contextUsageBar: document.getElementById('context-usage-bar'),
-      contextUsageBlocks: document.getElementById('context-usage-blocks'),
-      contextUsageLabel: document.getElementById('context-usage-label'),
+      contextUsagePill: document.getElementById('context-usage-pill'),
+      contextPillDot: document.getElementById('context-pill-dot'),
+      contextPillLabel: document.getElementById('context-pill-label'),
+      quickVoiceBtn: document.getElementById('quick-voice-btn'),
+      quickVoiceLabel: document.getElementById('quick-voice-label'),
     };
 
     // ============== Projects & Sessions API ==============
@@ -1311,8 +1339,8 @@
 
       el.messageInput.value = '';
       el.messageInput.style.height = 'auto';
-      el.sendBtn.disabled = true;
       state.isStreaming = true;
+      updateSendButtonUI();
 
       // Hide empty screen
       el.emptyState.style.display = 'none';
@@ -1481,8 +1509,32 @@
         hideLoadingIndicator();
         state.isStreaming = false;
         state.abortController = null;
-        el.sendBtn.disabled = el.messageInput.value.trim().length === 0;
+        updateSendButtonUI();
         el.messageInput.focus();
+      }
+    }
+
+    function updateSendButtonUI() {
+      if (!el.sendBtn) return;
+      if (state.isStreaming) {
+        el.sendBtn.disabled = false;
+        el.sendBtn.title = 'Stop generation';
+        el.sendBtn.className = 'bg-rose-500 hover:bg-rose-600 text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 shadow-glow active:scale-95 shrink-0';
+        el.sendBtn.innerHTML = `
+          <svg class="w-3 h-3 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+            <rect x="6" y="6" width="12" height="12" rx="2"/>
+          </svg>
+        `;
+      } else {
+        const hasText = el.messageInput.value.trim().length > 0;
+        el.sendBtn.disabled = !hasText;
+        el.sendBtn.title = 'Send message';
+        el.sendBtn.className = 'bg-brand hover:bg-brand-hover text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-25 disabled:hover:bg-brand shadow-sm active:scale-95 shrink-0';
+        el.sendBtn.innerHTML = `
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+          </svg>
+        `;
       }
     }
 
@@ -1505,7 +1557,20 @@
     }
 
     // ============== Listeners ==============
-    el.sendBtn.addEventListener('click', () => sendMessage());
+    el.sendBtn.addEventListener('click', () => {
+      if (state.isStreaming) {
+        state.abortController?.abort();
+      } else {
+        sendMessage();
+      }
+    });
+
+    el.quickVoiceBtn?.addEventListener('click', () => {
+      state.speechExplanation = !state.speechExplanation;
+      localStorage.setItem('qa-speech-explanation', String(state.speechExplanation));
+      updateQuickVoiceUI();
+      showNotification(state.speechExplanation ? 'Speech Explanation voice mode enabled' : 'Speech Explanation voice mode disabled', 'info');
+    });
 
     function isMobileView() {
       return window.innerWidth < 768 || window.matchMedia('(pointer: coarse)').matches || ('ontouchstart' in window);
@@ -1527,7 +1592,7 @@
       el.messageInput.style.height = 'auto';
       el.messageInput.style.height = Math.min(el.messageInput.scrollHeight, 192) + 'px';
 
-      el.sendBtn.disabled = el.messageInput.value.trim().length === 0 || state.isStreaming;
+      updateSendButtonUI();
     });
 
     el.messagesContainer?.addEventListener('scroll', () => {
@@ -1838,31 +1903,46 @@
         speechToggle.className = `relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${state.speechExplanation ? 'bg-brand' : 'bg-dark-border'}`;
         const span = speechToggle.querySelector('span');
         if (span) span.className = `pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${state.speechExplanation ? 'translate-x-4' : 'translate-x-0'}`;
+        updateQuickVoiceUI();
       });
 
       document.body.appendChild(modal);
     }
 
+    function updateQuickVoiceUI() {
+      if (!el.quickVoiceBtn || !el.quickVoiceLabel) return;
+      const isVoiceOn = Boolean(state.speechExplanation);
+      el.quickVoiceBtn.className = `flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-sans transition-all border shrink-0 ${
+        isVoiceOn 
+          ? 'bg-brand/15 text-brand border-brand/40 hover:bg-brand/25 shadow-glow' 
+          : 'bg-dark-elevated/40 text-txt-subtle border-dark-border/40 hover:text-txt-muted'
+      }`;
+      el.quickVoiceLabel.textContent = isVoiceOn ? 'Voice On' : 'Voice Off';
+    }
+
     // ============== Context Usage ==============
     function updateContextBar(ctx) {
-      if (!el.contextUsageBar) return;
+      if (!el.contextUsagePill) return;
       if (!ctx) {
-        el.contextUsageBar.classList.add('hidden');
-        el.contextUsageBar.classList.remove('flex');
+        el.contextUsagePill.classList.add('hidden');
+        el.contextUsagePill.classList.remove('flex');
         return;
       }
       const pct = ctx.percentage || 0;
-      const totalBlocks = 20;
-      const filled = Math.min(totalBlocks, Math.max(0, Math.round((pct / 100) * totalBlocks)));
-      const empty = totalBlocks - filled;
-      if (el.contextUsageBlocks) {
-        el.contextUsageBlocks.innerHTML = `<span class="text-brand">${'█'.repeat(filled)}</span><span class="text-brand/35">${'░'.repeat(empty)}</span>`;
+      if (el.contextPillLabel) {
+        el.contextPillLabel.textContent = `${pct}% context`;
       }
-      if (el.contextUsageLabel) {
-        el.contextUsageLabel.textContent = pct + '%';
+      if (el.contextPillDot) {
+        if (pct < 60) {
+          el.contextPillDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
+        } else if (pct < 85) {
+          el.contextPillDot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
+        } else {
+          el.contextPillDot.className = 'w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse';
+        }
       }
-      el.contextUsageBar.classList.remove('hidden');
-      el.contextUsageBar.classList.add('flex');
+      el.contextUsagePill.classList.remove('hidden');
+      el.contextUsagePill.classList.add('flex');
     }
 
     function showContextModal() {
@@ -1936,6 +2016,8 @@
 
     // ============== Initialize ==============
     async function init() {
+      updateQuickVoiceUI();
+      updateSendButtonUI();
       await loadProjects();
 
       if (state.currentThreadId) {

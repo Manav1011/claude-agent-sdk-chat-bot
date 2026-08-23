@@ -25,7 +25,7 @@ HOST = "0.0.0.0"
 PORT = 8225
 
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "97f5482590888eaa0afe9e173babd87c9abae1f5")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8083/anthropic")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8000")
 
 # Cache HTML frontends at module load time
 _HTML_PATH = Path(__file__).parent / "index.html"
@@ -264,6 +264,11 @@ SYSTEM_PROMPT_EXPLANATION_SCHEMA = {
     },
 }
 
+# Read-only tool set applied when permission_mode == "plan". These tools are the
+# only ones available to the agent (no write/executable tool can be called), and
+# they run with no approval prompt (see allowed_tools below).
+_READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "WebFetch", "WebSearch"]
+
 def _build_options(
     workspace: str,
     session_id: str | None = None,
@@ -273,8 +278,12 @@ def _build_options(
     skills: list[str] | Literal["all"] | None = None,
     permission_mode: Literal["plan", "bypassPermissions"] | None = None,
 ) -> ClaudeAgentOptions:
+    # "plan" (read-only) is enforced via a tool whitelist rather than the SDK's
+    # plan semantics: run on default permission checks but only expose the
+    # read-only tools so no write/executable tool can ever be called.
+    read_only = permission_mode == "plan"
     opts = ClaudeAgentOptions(
-        model="Minimax-M2.7",
+        model="ornith-1.5",
         system_prompt=system_prompt,
         env={
             "ANTHROPIC_API_KEY": LLM_API_KEY,
@@ -286,8 +295,11 @@ def _build_options(
         include_partial_messages=True,
         setting_sources=setting_sources,
         skills=skills,
-        permission_mode=permission_mode,
+        permission_mode=None if read_only else permission_mode,
     )
+    if read_only:
+        opts.tools = list(_READ_ONLY_TOOLS)
+        opts.allowed_tools = list(_READ_ONLY_TOOLS)
     return opts
 
 
