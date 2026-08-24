@@ -158,7 +158,8 @@ _cache_lock = asyncio.Lock()
 
 def _sdk_project_key(workspace: str) -> str:
     """Compute SDK project-key from workspace path."""
-    return "-" + os.path.realpath(workspace).lstrip("/").replace("/", "-")
+    # The SDK replaces '.' with '-' in path components when building the key
+    return "-" + os.path.realpath(workspace).lstrip("/").replace("/", "-").replace(".", "-")
 
 
 def _read_sdk_history(

@@ -1030,7 +1030,22 @@ export function ChatProvider({ children }) {
         }
       }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      if (err.name === 'AbortError') {
+        if (streamAccumulatedAi) {
+          setMessages(prev => ({
+            ...prev,
+            [sessionThreadId]: [
+              ...(prev[sessionThreadId] || []),
+              {
+                type: 'ai',
+                content: streamAccumulatedAi,
+                speech_explanation: speechExpl,
+                usage: null,
+              },
+            ],
+          }));
+        }
+      } else {
         setErrorMessage(err.message || 'Failed to communicate with agent server');
       }
     } finally {
@@ -1054,16 +1069,19 @@ export function ChatProvider({ children }) {
     loadProjectSessions,
   ]);
 
-  const stopStream = useCallback((targetThreadId = currentThreadId) => {
-    if (targetThreadId && abortControllersRef.current[targetThreadId]) {
-      abortControllersRef.current[targetThreadId].abort();
-      delete abortControllersRef.current[targetThreadId];
+  const stopStream = useCallback((targetThreadId) => {
+    const threadId = (typeof targetThreadId === 'string' && targetThreadId) ? targetThreadId : currentThreadId;
+    if (threadId && abortControllersRef.current[threadId]) {
+      abortControllersRef.current[threadId].abort();
+      delete abortControllersRef.current[threadId];
     }
-    setActiveStreams(prev => {
-      const next = { ...prev };
-      delete next[targetThreadId];
-      return next;
-    });
+    if (threadId) {
+      setActiveStreams(prev => {
+        const next = { ...prev };
+        delete next[threadId];
+        return next;
+      });
+    }
   }, [currentThreadId]);
 
   // Initial mount

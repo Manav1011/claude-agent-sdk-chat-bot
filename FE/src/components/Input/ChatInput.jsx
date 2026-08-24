@@ -250,7 +250,7 @@ export default function ChatInput() {
             {isStreaming ? (
               <button
                 type="button"
-                onClick={stopStream}
+                onClick={() => stopStream()}
                 title="Stop generation"
                 className="bg-rose-500 hover:bg-rose-600 text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 shadow-glow active:scale-95 shrink-0 cursor-pointer"
               >
