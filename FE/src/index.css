@@ -3,7 +3,13 @@
 @tailwind utilities;
 
 /* Global Reset & Glassmorphism */
-body {
+html,
+body,
+#root {
+  height: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
   background-color: #0c0d10;
   color: #f3f4f6;
   font-family: 'Inter', sans-serif;
@@ -75,11 +81,15 @@ body {
 .prose-dark code:not(pre code) {
   background: #2a2d37;
   color: #f16913;
-  padding: 0.15rem 0.4rem;
-  border-radius: 0.25rem;
+  padding: 0.12rem 0.35rem;
+  border-radius: 0.35rem;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.825em;
-  word-break: break-all;
+  font-size: 0.85em;
+  word-break: normal;
+  overflow-wrap: break-word;
+  display: inline-block;
+  vertical-align: baseline;
+  max-width: 100%;
 }
 .prose-dark pre {
   background: #14151a !important;

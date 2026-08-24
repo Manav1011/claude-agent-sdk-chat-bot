@@ -1,9 +1,32 @@
-__pycache__/
-*.pyc
-*.pyo
-*.db
-chat_memory.db
-*.egg-info/
+# Virtual environments
 .venv/
 venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Node
 node_modules/
+
+# Secrets
+.env
+*.key
+*.pem
+
+# IDE
+.idea/
+.vscode/
+.venv/
+*.db
+*.db-shm
+*.db-wal
+node_modules/
+__pycache__/

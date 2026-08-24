@@ -147,6 +147,7 @@ export function ChatProvider({ children }) {
   }, [showNotification]);
 
   // Speech TTS State
+  // Speech Audio State
   const [speechState, setSpeechState] = useState({
     isPlaying: false,
     activeId: null,
@@ -154,19 +155,71 @@ export function ChatProvider({ children }) {
   });
 
   const currentSpeechIdRef = useRef(0);
+  const currentAudioRef = useRef(null);
+  const currentRateRef = useRef(1.0);
+  const preloadedAudiosRef = useRef([]);
 
-  // Speech Audio Stop
+  // Stop Speech Audio
   const stopSpeechAudio = useCallback(() => {
     currentSpeechIdRef.current += 1;
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+    if (preloadedAudiosRef.current) {
+      preloadedAudiosRef.current.forEach(a => {
+        try {
+          a.pause();
+          a.onended = null;
+          a.onerror = null;
+          a.src = '';
+        } catch {}
+      });
+      preloadedAudiosRef.current = [];
+    }
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.onended = null;
+        currentAudioRef.current.onerror = null;
+        currentAudioRef.current.src = '';
+      } catch {}
+      currentAudioRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch {}
     }
     setSpeechState(prev => ({ ...prev, isPlaying: false, activeId: null }));
   }, []);
 
-  // Speech Audio Play
+  // Split text into natural sentence chunks for smooth streaming
+  const chunkTextForAudio = (text) => {
+    const clean = (text || '')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/[*#_~]/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .trim();
+
+    if (!clean) return [];
+
+    const sentences = clean.match(/[^.!?\n]+[.!?\n]+|[^.!?\n]+$/g) || [clean];
+    const chunks = [];
+    let cur = '';
+
+    for (const s of sentences) {
+      const trimmed = s.trim();
+      if (!trimmed) continue;
+      if (cur && (cur.length + trimmed.length > 250)) {
+        chunks.push(cur);
+        cur = trimmed;
+      } else {
+        cur = cur ? `${cur} ${trimmed}` : trimmed;
+      }
+    }
+    if (cur) chunks.push(cur);
+    return chunks;
+  };
+
+  // Play Speech Audio via HTML5 Audio with zero-latency pre-buffering
   const playSpeechExplanation = useCallback((text, id) => {
-    if (!('speechSynthesis' in window) || !text) return;
+    if (!text) return;
 
     if (speechState.isPlaying && speechState.activeId === id) {
       stopSpeechAudio();
@@ -176,44 +229,78 @@ export function ChatProvider({ children }) {
     stopSpeechAudio();
     currentSpeechIdRef.current += 1;
     const speechId = currentSpeechIdRef.current;
+    currentRateRef.current = speechState.rate || 1.0;
+
+    const chunks = chunkTextForAudio(text);
+    if (chunks.length === 0) return;
 
     setSpeechState(prev => ({ ...prev, isPlaying: true, activeId: id }));
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = speechState.rate;
+    // Pre-create and pre-load all chunk audio elements so next sentences buffer ahead of time
+    const audioQueue = chunks.map((chunk) => {
+      const audio = new Audio(`/api/tts?v=ryan&q=${encodeURIComponent(chunk)}`);
+      audio.preload = 'auto';
+      const rate = currentRateRef.current || 1.0;
+      audio.defaultPlaybackRate = rate;
+      audio.playbackRate = rate;
+      return audio;
+    });
+    preloadedAudiosRef.current = audioQueue;
 
-    utterance.onend = () => {
+    let chunkIdx = 0;
+
+    const playNextChunk = () => {
       if (speechId !== currentSpeechIdRef.current) return;
-      stopSpeechAudio();
+      if (chunkIdx >= audioQueue.length) {
+        stopSpeechAudio();
+        return;
+      }
+
+      const audio = audioQueue[chunkIdx++];
+      currentAudioRef.current = audio;
+      const rate = currentRateRef.current || 1.0;
+      audio.defaultPlaybackRate = rate;
+      audio.playbackRate = rate;
+
+      audio.onended = () => {
+        if (speechId !== currentSpeechIdRef.current) return;
+        playNextChunk();
+      };
+
+      audio.onerror = (e) => {
+        console.warn('TTS chunk audio error, continuing seamlessly:', e);
+        if (speechId !== currentSpeechIdRef.current) return;
+        playNextChunk();
+      };
+
+      audio.play().catch((err) => {
+        console.warn('Audio playback error:', err);
+        if (speechId === currentSpeechIdRef.current) {
+          playNextChunk();
+        }
+      });
     };
 
-    utterance.onerror = (e) => {
-      if (speechId !== currentSpeechIdRef.current) return;
-      if (e.error === 'canceled' || e.error === 'interrupted') return;
-      stopSpeechAudio();
-    };
-
-    window.speechSynthesis.speak(utterance);
+    playNextChunk();
   }, [speechState.isPlaying, speechState.activeId, speechState.rate, stopSpeechAudio]);
 
   const cycleSpeechRate = useCallback((id, text) => {
     const speeds = [1.0, 1.25, 1.5, 2.0];
-    const nextSpeed = speeds[(speeds.indexOf(speechState.rate) + 1) % speeds.length];
+    const currentIdx = speeds.findIndex(s => Math.abs(s - currentRateRef.current) < 0.05);
+    const nextSpeed = speeds[(currentIdx + 1) % speeds.length];
+    currentRateRef.current = nextSpeed;
     setSpeechState(prev => ({ ...prev, rate: nextSpeed }));
-    if (speechState.isPlaying && speechState.activeId === id) {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = nextSpeed;
-      utterance.onend = () => stopSpeechAudio();
-      utterance.onerror = (e) => {
-        if (e.error === 'canceled' || e.error === 'interrupted') return;
-        stopSpeechAudio();
-      };
-      window.speechSynthesis.speak(utterance);
+
+    if (currentAudioRef.current) {
+      currentAudioRef.current.playbackRate = nextSpeed;
     }
-  }, [speechState.rate, speechState.isPlaying, speechState.activeId, stopSpeechAudio]);
+    if (preloadedAudiosRef.current) {
+      preloadedAudiosRef.current.forEach(a => {
+        a.defaultPlaybackRate = nextSpeed;
+        a.playbackRate = nextSpeed;
+      });
+    }
+  }, []);
 
   // Set Current Thread Helper
   const setCurrentThread = useCallback((threadId) => {

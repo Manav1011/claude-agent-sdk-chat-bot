@@ -120,7 +120,7 @@ export default function MessagesContainer() {
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5 pb-32 sm:pb-36 space-y-4 w-full min-w-0"
+      className="flex-1 overflow-y-auto overflow-x-hidden p-2.5 sm:p-5 pb-28 sm:pb-36 space-y-3 sm:space-y-4 w-full min-w-0"
     >
       {isLoadingOlder[currentThreadId] && (
         <div className="w-full flex items-center justify-center py-2 text-txt-subtle text-xs gap-2 shrink-0">

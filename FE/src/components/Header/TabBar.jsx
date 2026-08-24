@@ -50,10 +50,10 @@ export default function TabBar() {
   };
 
   return (
-    <div className="h-9 bg-[#0b0c10] border-b border-dark-border/70 flex items-center px-2 select-none shrink-0 overflow-hidden">
+    <div className="h-7.5 sm:h-8.5 bg-[#0b0c10] border-b border-dark-border/70 flex items-center px-1.5 sm:px-2 select-none shrink-0 overflow-hidden">
       <div
         ref={scrollRef}
-        className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1 h-full py-1 min-w-0"
+        className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1 h-full py-0.5 sm:py-1 min-w-0"
       >
         {openTabs.map((tab, idx) => {
           const isActive =
@@ -74,7 +74,7 @@ export default function TabBar() {
                   startNewChat(tab.projectId);
                 }
               }}
-              className={`group h-7 px-2.5 rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all duration-150 shrink-0 max-w-[190px] border ${
+              className={`group h-6 sm:h-7 px-2 sm:px-2.5 rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all duration-150 shrink-0 max-w-[145px] sm:max-w-[190px] border ${
                 isActive
                   ? 'active-session-tab bg-dark-elevated text-white border-dark-border/90 font-medium shadow-sm'
                   : 'bg-transparent hover:bg-dark-surface/60 text-txt-muted hover:text-white border-transparent'

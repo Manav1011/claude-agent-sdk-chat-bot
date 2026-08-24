@@ -12,18 +12,18 @@ function ToolCallMessage({ tool }) {
   const outputText = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput, null, 2);
 
   return (
-    <div className="w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0 my-2">
+    <div className="w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0 my-1.5 sm:my-2">
       <div className="bg-dark-surface/90 hover:bg-dark-surface border border-dark-border/80 hover:border-brand/40 rounded-xl overflow-hidden shadow-sm transition-all min-w-0 max-w-full">
         <details className="group">
-          <summary className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none bg-dark-elevated/40 hover:bg-dark-elevated/80 transition-colors min-w-0">
-            <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden pr-2">
+          <summary className="flex items-center justify-between px-2.5 py-1.5 sm:px-3.5 sm:py-2 cursor-pointer select-none bg-dark-elevated/40 hover:bg-dark-elevated/80 transition-colors min-w-0">
+            <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden pr-2">
               <div className="flex items-center gap-1.5 shrink-0">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span className="font-mono text-[11px] font-semibold text-txt-main px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">
+                <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400" />
+                <span className="font-mono text-[10px] sm:text-[11px] font-semibold text-txt-main px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">
                   {toolName}
                 </span>
               </div>
-              <span className="font-mono text-xs text-txt-muted truncate block min-w-0 flex-1">
+              <span className="font-mono text-[11px] sm:text-xs text-txt-muted truncate block min-w-0 flex-1">
                 {inputCmd || inputDesc || 'Executed tool'}
               </span>
             </div>

@@ -26,12 +26,12 @@ export default function Header() {
       : 'New Conversation';
 
   return (
-    <header className="h-12 px-3 sm:px-5 border-b border-dark-border/60 bg-dark-surface/40 backdrop-blur-md flex items-center justify-between shrink-0">
-      <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-3">
+    <header className="h-10 sm:h-12 px-2.5 sm:px-4 border-b border-dark-border/60 bg-dark-surface/40 backdrop-blur-md flex items-center justify-between shrink-0">
+      <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
         <button
           type="button"
           onClick={toggleSidebar}
-          className="p-1.5 text-txt-muted hover:text-white rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border transition-colors cursor-pointer shrink-0"
+          className="p-1 sm:p-1.5 text-txt-muted hover:text-white rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border transition-colors cursor-pointer shrink-0"
           title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

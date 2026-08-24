@@ -1,0 +1,10 @@
+# Backend dependencies
+fastapi>=0.100.0
+pydantic>=2.0.0
+claude-agent-sdk
+uvicorn[standard]>=0.20.0
+piper-tts
+requests
+
+# Optional — install when needed
+# piper (TTS engine, optional — only used if model files are present)

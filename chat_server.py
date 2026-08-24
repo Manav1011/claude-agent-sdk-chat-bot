@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import io
 import json
 import os
 import uuid
+import wave
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal
 
@@ -33,6 +39,8 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY", "97f5482590888eaa0afe9e173babd87c9ab
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8083/anthropic")
 
 # Cache HTML frontends at module load time
+_FE_DIST_PATH = Path(__file__).parent / "FE" / "dist"
+_FE_INDEX_PATH = _FE_DIST_PATH / "index.html"
 _HTML_PATH = Path(__file__).parent / "index.html"
 _CACHED_HTML = _HTML_PATH.read_text() if _HTML_PATH.exists() else "<h1>index.html not found</h1>"
 _MAXIMALISM_HTML_PATH = Path(__file__).parent / "maximalism" / "index.html"
@@ -81,14 +89,51 @@ def _resolve_workspace(project_id: int | None) -> str:
     return _DEFAULT_WORKSPACE
 
 
+# ============== Piper Neural TTS Setup ==============
+_PIPER_MODEL_PATHS = [
+    Path(__file__).parent / "en_US-ryan-medium.onnx",
+    Path(__file__).parent / "en_US-lessac-medium.onnx",
+]
+_piper_voice = None
+_tts_executor = ThreadPoolExecutor(
+    max_workers=min(4, os.cpu_count() or 2),
+    thread_name_prefix="tts_worker",
+)
+_TTS_CACHE_MAX_SIZE = 300
+_tts_cache: OrderedDict[str, bytes] = OrderedDict()
+_tts_cache_lock = asyncio.Lock()
+
+def _load_piper_model():
+    global _piper_voice
+    model_path = next((p for p in _PIPER_MODEL_PATHS if p.exists()), None)
+    if model_path is not None:
+        try:
+            from piper import PiperVoice
+            _piper_voice = PiperVoice.load(model_path)
+            print(f"[INFO] Piper TTS model warm-loaded successfully from {model_path.name}.")
+        except Exception as e:
+            print(f"[WARN] Failed to load Piper TTS model: {e}")
+    else:
+        print("[WARN] No Piper model file found in project directory.")
+
+def _synthesize_piper_wav(text: str) -> bytes:
+    """CPU-bound task executed inside dedicated thread pool."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav_file:
+        _piper_voice.synthesize_wav(text, wav_file)
+    return buf.getvalue()
+
+
 # ============== Lifespan ==============
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _init_db()
+    _load_piper_model()
     yield
     global _WORKSPACE_CLIENTS
     _WORKSPACE_CLIENTS.clear()
+    _tts_executor.shutdown(wait=False)
 
 
 app = FastAPI(title="QA Automation Chatbot", lifespan=lifespan)
@@ -100,6 +145,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if (_FE_DIST_PATH / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=_FE_DIST_PATH / "assets"), name="assets")
 
 # Per-workspace SDK client cache (for context_usage queries between requests)
 _WORKSPACE_CLIENTS: dict[str, ClaudeSDKClient] = {}
@@ -231,6 +279,7 @@ def _read_sdk_history(
                 if isinstance(msg_content, list):
                     texts = []
                     thinking_content = None
+                    speech_explanation = None
                     for block in msg_content:
                         if block.get("type") == "text":
                             texts.append(block.get("text", ""))
@@ -238,7 +287,9 @@ def _read_sdk_history(
                             tool_name = block.get("name")
                             tool_input = block.get("input", {})
                             assistant_uuid = entry.get("uuid")
-                            if assistant_uuid and tool_name:
+                            if tool_name == "StructuredOutput":
+                                speech_explanation = tool_input.get("explanation", "")
+                            elif assistant_uuid and tool_name:
                                 pending_tool_calls[assistant_uuid] = {
                                     "name": tool_name,
                                     "input": tool_input,
@@ -247,7 +298,13 @@ def _read_sdk_history(
                             thinking_content = block.get("thinking", "")
                     if texts:
                         ai_msg = {"type": "ai", "content": "".join(texts)}
+                        if speech_explanation:
+                            ai_msg["speech_explanation"] = speech_explanation
                         messages.append(ai_msg)
+                        byte_offsets.append(byte_pos)
+                    elif speech_explanation:
+                        # StructuredOutput-only response (no text block)
+                        messages.append({"type": "ai", "content": speech_explanation, "speech_explanation": speech_explanation})
                         byte_offsets.append(byte_pos)
                     if thinking_content:
                         messages.append({"type": "thinking", "content": thinking_content})
@@ -287,18 +344,14 @@ def _read_sdk_history(
 
 
 
-SPEECH_EXPLANATION_SYSTEM_PROMPT = """After your response, produce a StructuredOutput with a detailed spoken explanation — as if you're tutoring someone through the entire response, section by section.
+SPEECH_EXPLANATION_SYSTEM_PROMPT = """After your response, produce a StructuredOutput with a spoken explanation.
 
-Walk through the same topics your response covered, with the same depth. Do not distill or skip details. For each concept, explain the "why" behind it, use analogies to make it click, and give concrete examples. Imagine you're on a call with someone who read your response and wants you to walk them through it properly — that's this explanation.
-
-Structure your explanation to mirror your response's flow:
-- Start with the core concept or main idea, explained fully
-- Walk through each section or sub-topic your response covered, in order
-- For each section: explain the key ideas, not just what it is but what it means and why it matters
-- Use everyday analogies wherever something abstract is introduced
-- End with why this matters or how it connects to the bigger picture
-
-Do NOT just restate your response in fewer words. Do NOT narrate what you did ("I covered...", "I explained..."). The explanation IS the full walkthrough — a student should finish listening and understand everything your response covered."""
+CRITICAL RULES FOR THIS SPOKEN EXPLANATION:
+1. TARGET AUDIENCE IS LISTENING, NOT READING: This text will be fed directly into a text-to-speech synthesizer and played aloud to the user's ears. Write it entirely as natural, conversational spoken narration.
+2. ABSOLUTELY NO MARKDOWN: Do NOT include any asterisks, bold markers, italics, bullet points, hashtags, headers, numbered lists, or backticks. Zero markdown formatting.
+3. ABSOLUTELY NO CODE OR SYNTAX SYMBOLS: Never write raw code, programming symbols, variable names with underscores, function signatures, or SQL queries (e.g. no 'SELECT *', 'exp.Select', '_walk()', 'foo_bar', brackets, or parentheses). Instead, explain all technical concepts and operations in plain, everyday conversational English (for example, say "the select expression" or "the recursive traversal function").
+4. CONTINUOUS SPOKEN PARAGRAPHS: Write in smooth, flowing natural paragraphs. Use conversational speech transitions ("To understand how this works...", "Next, let us look at...", "What this really means in practice is...") and clear everyday analogies.
+5. COMPLETE AND ENGAGING: Walk through the core concept, the step-by-step logic, and why it matters, as if an expert tutor is explaining it aloud over a voice call."""
 
 SYSTEM_PROMPT_EXPLANATION_SCHEMA = {
     "type": "json_schema",
@@ -307,7 +360,7 @@ SYSTEM_PROMPT_EXPLANATION_SCHEMA = {
         "properties": {
             "explanation": {
                 "type": "string",
-                "description": "A detailed verbal walkthrough of the entire response, section by section. Covers the same topics with the same depth as the response itself. Written as a tutor explaining to a student — conversational, uses analogies for abstract concepts, walks through every major point the response covered. NOT a summary or TLDR; the full explanation as if spoken aloud during a tutoring session."
+                "description": "A natural, spoken-word voice script for text-to-speech audio playback. Must be written in 100% plain conversational English paragraphs with zero markdown, zero code snippets, and zero syntax symbols. Explains all technical concepts, logic, and significance verbally as if speaking aloud to a student on a phone call."
             }
         },
         "required": ["explanation"],
@@ -333,7 +386,7 @@ def _build_options(
     # read-only tools so no write/executable tool can ever be called.
     read_only = permission_mode == "read_only"
     opts = ClaudeAgentOptions(
-        model="Minimax-M2.7",
+        model="ornith-1.0",
         system_prompt=system_prompt,
         env={
             "ANTHROPIC_API_KEY": LLM_API_KEY,
@@ -373,6 +426,8 @@ class ChatRequest(BaseModel):
     """Skills to enable. null = SDK defaults, [] = no skills, 'all' = all discovered skills."""
     permission_mode: Literal["read_only", "bypassPermissions"] | None = None
     """Permission mode. 'read_only' = read-only (tool whitelist), 'bypassPermissions' = full access, null = SDK defaults."""
+    image_paths: list[str] | None = None
+    """Local paths to images to attach to this message. Model will read them via its Read tool."""
 
 
 class WorkspaceSelectRequest(BaseModel):
@@ -405,6 +460,8 @@ class MessagesResponse(BaseModel):
 
 @app.get("/")
 async def root():
+    if _FE_INDEX_PATH.exists():
+        return HTMLResponse(content=_FE_INDEX_PATH.read_text(encoding="utf-8"), status_code=200)
     return HTMLResponse(content=_CACHED_HTML, status_code=200)
 
 
@@ -615,6 +672,84 @@ async def get_current_workspace(session_id: str | None = None):
     return {"workspace": _DEFAULT_WORKSPACE}
 
 
+# ============== Image upload endpoint ==============
+
+@app.post("/api/upload")
+async def upload_images(files: list[UploadFile]):
+    """Save uploaded images to /tmp/uploads and return their paths."""
+    upload_dir = Path("/tmp/uploads")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    paths: list[str] = []
+    for f in files:
+        ext = Path(f.filename or "image.png").suffix or ".png"
+        path = upload_dir / f"{uuid.uuid4().hex}{ext}"
+        path.write_bytes(await f.read())
+        paths.append(str(path))
+
+    return {"paths": paths}
+ 
+ 
+ # ============== TTS audio endpoint ==============
+
+@app.get("/api/tts")
+async def tts_endpoint(q: str):
+    """High-performance Piper Neural TTS with in-memory LRU caching and thread pool offloading."""
+    clean_q = (q or "").strip()
+    if not clean_q:
+        raise HTTPException(status_code=400, detail="Text required")
+
+    cache_key = hashlib.sha256(clean_q.encode("utf-8")).hexdigest()
+
+    # 1. In-Memory LRU Cache lookup (0ms response)
+    async with _tts_cache_lock:
+        if cache_key in _tts_cache:
+            _tts_cache.move_to_end(cache_key)
+            return Response(
+                content=_tts_cache[cache_key],
+                media_type="audio/wav",
+                headers={
+                    "Cache-Control": "public, max-age=86400, immutable",
+                    "X-Cache": "HIT",
+                },
+            )
+
+    # 2. Synthesize with Piper Neural TTS via ThreadPool
+    if _piper_voice is not None:
+        loop = asyncio.get_running_loop()
+        try:
+            wav_bytes = await loop.run_in_executor(_tts_executor, _synthesize_piper_wav, clean_q)
+            async with _tts_cache_lock:
+                _tts_cache[cache_key] = wav_bytes
+                if len(_tts_cache) > _TTS_CACHE_MAX_SIZE:
+                    _tts_cache.popitem(last=False)
+            return Response(
+                content=wav_bytes,
+                media_type="audio/wav",
+                headers={
+                    "Cache-Control": "public, max-age=86400, immutable",
+                    "X-Cache": "MISS",
+                },
+            )
+        except Exception as e:
+            print(f"[ERROR] Piper synthesis failed for '{clean_q[:60]}...': {e}")
+
+    # Fallback to web TTS if Piper is not available or encounters an error
+    import urllib.parse
+    import urllib.request
+    try:
+        def fetch_fallback():
+            encoded = urllib.parse.quote(clean_q[:100])
+            url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q={encoded}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                return resp.read()
+        fallback_bytes = await asyncio.to_thread(fetch_fallback)
+        return Response(content=fallback_bytes, media_type="audio/mpeg")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {e}")
+
+
 # ============== Permission endpoints ==============
 
 class PermissionDecisionRequest(BaseModel):
@@ -784,7 +919,15 @@ async def chat(request: ChatRequest):
                         if not has_custom_config:
                             _WORKSPACE_CLIENTS[cache_key] = client
 
-                await client.query(prompt=request.message)
+                # Build prompt with image context if any were uploaded
+                prompt = request.message
+                if request.image_paths:
+                    image_context = "\n".join(
+                        f"- image_{i+1}: {p}" for i, p in enumerate(request.image_paths)
+                    )
+                    prompt = f"Attached images:\n{image_context}\n\n{request.message}"
+
+                await client.query(prompt=prompt)
 
                 async for msg in client.receive_response():
                     # --- StreamEvent ---
@@ -952,6 +1095,10 @@ async def chat(request: ChatRequest):
                     _permission_meta.pop(rid, None)
             if not reader_task.done():
                 reader_task.cancel()
+            # Clean up uploaded image files
+            if request.image_paths:
+                for path in request.image_paths:
+                    Path(path).unlink(missing_ok=True)
 
     return StreamingResponse(
         event_stream(),

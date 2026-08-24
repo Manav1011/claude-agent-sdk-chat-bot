@@ -136,7 +136,7 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none bg-gradient-to-t from-dark-bg via-dark-bg/85 to-transparent pt-8 pb-3 px-3 sm:pb-4 sm:px-4">
+    <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none bg-gradient-to-t from-dark-bg via-dark-bg/95 to-transparent pt-6 pb-[max(0.65rem,env(safe-area-inset-bottom))] px-2.5 sm:pb-3.5 sm:px-4">
       <div className="w-full max-w-2xl lg:max-w-3xl mx-auto min-w-0">
         {/* Smart Capsule Card */}
         <div
