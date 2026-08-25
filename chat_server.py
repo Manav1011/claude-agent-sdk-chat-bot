@@ -33,7 +33,7 @@ from claude_agent_sdk.types import (
 from schemas import Project, ProjectCreate, ProjectsListResponse, ProjectSessionsResponse, SessionResponse
 
 HOST = "0.0.0.0"
-PORT = 8225
+PORT = 8227
 
 LLM_MODEL = os.environ.get("LLM_MODEL", "ornith-1.0")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjgyNTk1NTQ1LTAyMDYtNGVlMy1hMjg3LTZhM2RiYjI2OTQzNSIsInNjb3BlIjoiaWVfbW9kZWwiLCJwcm9kdWN0IjoiSUUiLCJvd25lcklkIjoiZDNkY2VjMjgtMjQ5MS00NmU1LWI2YmYtZDcyYzg0YmRmZGEyIn0._R-wta0JXQRi3FbA7S0IXqC_sT14maRy0CwZ7kl4tM4")
@@ -630,10 +630,23 @@ def _read_sdk_history(
                                         })
                                         byte_offsets.append(byte_pos)
                     else:
-                        texts = [c.get("text", "") for c in msg_content if c.get("type") == "text"]
-                        human_text = "".join(texts)
+                        text_blocks = [c for c in msg_content if c.get("type") == "text"]
+                        image_blocks = [c for c in msg_content if c.get("type") == "image"]
+                        human_text = "".join(c.get("text", "") for c in text_blocks)
                         if human_text and not human_text.startswith("[structured-output-enforce]") and not human_text.startswith("Stop hook feedback:"):
-                            messages.append({"type": "human", "content": human_text})
+                            human_msg = {"type": "human", "content": human_text}
+                            if image_blocks:
+                                # SDK stores images in the same {data, media_type} shape we
+                                # send over the wire — mirror it so reloads keep thumbnails.
+                                human_msg["images"] = [
+                                    {
+                                        "data": img["source"]["data"],
+                                        "media_type": img["source"]["media_type"],
+                                    }
+                                    for img in image_blocks
+                                    if img.get("source", {}).get("type") == "base64"
+                                ]
+                            messages.append(human_msg)
                             byte_offsets.append(byte_pos)
 
             elif entry_type == "assistant":
