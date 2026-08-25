@@ -5,6 +5,7 @@ import Header from './components/Header/Header';
 import TabBar from './components/Header/TabBar';
 import MessagesContainer from './components/Chat/MessagesContainer';
 import ChatInput from './components/Input/ChatInput';
+import SelectionPopup from './components/Chat/SelectionPopup';
 import SettingsModal from './components/Modals/SettingsModal';
 import ContextModal from './components/Modals/ContextModal';
 import ImageLightboxModal from './components/Modals/ImageLightboxModal';
@@ -19,6 +20,7 @@ function AppContent() {
         <Header />
         <MessagesContainer />
         <ChatInput />
+        <SelectionPopup />
       </main>
       <SettingsModal />
       <ContextModal />

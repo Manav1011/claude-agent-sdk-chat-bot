@@ -118,6 +118,11 @@ export function ChatProvider({ children }) {
     }
   });
 
+  // Reply-to-quote state: when set, the next send includes the quoted text as
+  // a markdown blockquote appended to the user message. Cleared after send.
+  const [replyQuote, setReplyQuote] = useState(null);
+  const clearReplyQuote = useCallback(() => setReplyQuote(null), []);
+
   useEffect(() => {
     try {
       localStorage.setItem('qa-open-tabs', JSON.stringify(openTabs));
@@ -1193,6 +1198,9 @@ export function ChatProvider({ children }) {
     closeTabsToLeft,
     closeTabsToRight,
     closeAllTabs,
+    replyQuote,
+    setReplyQuote,
+    clearReplyQuote,
     activeStreams,
     messages,
     sessionCursors,

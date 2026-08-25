@@ -23,7 +23,7 @@ function fileToBase64Image(file) {
 }
 
 export default function ChatInput() {
-  const { isStreaming, sendMessage, stopStream } = useChat();
+  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote } = useChat();
   const [inputText, setInputText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -94,7 +94,8 @@ export default function ChatInput() {
 
   const hasText = inputText.trim().length > 0;
   const hasAttachments = attachments.length > 0;
-  const canSend = hasText || hasAttachments;
+  const hasQuote = Boolean(replyQuote);
+  const canSend = hasText || hasAttachments || hasQuote;
 
   const handleSend = async () => {
     if (isStreaming) {
@@ -104,6 +105,12 @@ export default function ChatInput() {
     if (!canSend) return;
 
     const text = inputText.trim();
+    // If a quote is attached, append it as a markdown blockquote. Each line
+    // of the quote is prefixed so multi-line selections render as a single
+    // blockquote rather than breaking the block.
+    const finalText = replyQuote
+      ? (text ? `${text}\n\n> ${replyQuote.replace(/\n/g, '\n> ')}` : `> ${replyQuote.replace(/\n/g, '\n> ')}`)
+      : text;
     // Read each attached File as base64 inline image blocks. Backend passes these
     // straight to the SDK as `{type: "image", source: {type: "base64", ...}}`.
     const imageData = await Promise.all(
@@ -112,10 +119,11 @@ export default function ChatInput() {
 
     setInputText('');
     setAttachments([]);
+    clearReplyQuote();
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-    sendMessage(text, [], imageData);
+    sendMessage(finalText, [], imageData);
   };
 
   const handleKeyDown = (e) => {
@@ -189,6 +197,38 @@ export default function ChatInput() {
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Reply Quote Chip */}
+          {replyQuote && (
+            <div className="flex items-start gap-2 py-1 px-2 rounded-lg bg-brand/10 border border-brand/30 border-l-2 border-l-brand">
+              <svg className="w-3.5 h-3.5 text-brand mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4"
+                />
+              </svg>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-medium text-brand uppercase tracking-wide leading-none mb-1">
+                  Replying to
+                </div>
+                <div className="text-[11px] sm:text-xs text-txt-main leading-snug line-clamp-2 break-words">
+                  {replyQuote}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={clearReplyQuote}
+                title="Remove quote"
+                className="p-1 rounded hover:bg-dark-bg/60 text-txt-muted hover:text-white transition-colors cursor-pointer shrink-0"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           )}
 

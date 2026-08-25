@@ -121,6 +121,7 @@ export default function MessagesContainer() {
     <div
       ref={containerRef}
       onScroll={handleScroll}
+      data-messages
       className="flex-1 overflow-y-auto overflow-x-hidden p-2.5 sm:p-5 pb-28 sm:pb-36 space-y-3 sm:space-y-4 w-full min-w-0"
     >
       {isLoadingOlder[currentThreadId] && (
