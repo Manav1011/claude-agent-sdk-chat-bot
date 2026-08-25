@@ -1,9 +1,26 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from '../../context/ChatContext';
 import { isMobileView } from '../../utils/helpers';
-import { uploadImagesApi } from '../../utils/api';
 import ContextUsagePill from './ContextUsagePill';
 import QuickVoiceButton from './QuickVoiceButton';
+
+// Convert a File to a base64 dict that matches the SDK image-block format
+// (`{type: "image", source: {type: "base64", media_type, data}}`).
+// FileReader.readAsDataURL returns "data:<media>;base64,<data>" — split it.
+function fileToBase64Image(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      const comma = result.indexOf(',');
+      const mediaType = result.slice(5, result.indexOf(';'));
+      const data = result.slice(comma + 1);
+      resolve({ data, media_type: mediaType });
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function ChatInput() {
   const { isStreaming, sendMessage, stopStream } = useChat();
@@ -28,7 +45,9 @@ export default function ChatInput() {
     }
   }, [isStreaming]);
 
-  // Upload handler for picked/pasted/dropped images
+  // Pick/paste/drop images — keep the File locally, base64-encode at send time.
+  // (Server-side /api/upload no longer needed for the streaming path: SDK image blocks
+  // are sent inline, model sees the image without reading from disk.)
   const handleUploadFiles = async (filesToUpload) => {
     const validImageFiles = Array.from(filesToUpload).filter((f) => f.type.startsWith('image/'));
     if (validImageFiles.length === 0) return;
@@ -37,37 +56,9 @@ export default function ChatInput() {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       file,
       previewUrl: URL.createObjectURL(file),
-      serverPath: null,
-      isUploading: true,
-      error: null,
     }));
 
     setAttachments((prev) => [...prev, ...newAttachments]);
-
-    try {
-      const uploadRes = await uploadImagesApi(validImageFiles);
-      const paths = uploadRes.paths || [];
-      setAttachments((prev) =>
-        prev.map((att) => {
-          const matchIdx = newAttachments.findIndex((n) => n.id === att.id);
-          if (matchIdx !== -1 && paths[matchIdx]) {
-            return { ...att, isUploading: false, serverPath: paths[matchIdx] };
-          }
-          return att;
-        })
-      );
-    } catch (err) {
-      console.error('Failed to upload images:', err);
-      setAttachments((prev) =>
-        prev.map((att) => {
-          const match = newAttachments.some((n) => n.id === att.id);
-          if (match) {
-            return { ...att, isUploading: false, error: err.message || 'Upload failed' };
-          }
-          return att;
-        })
-      );
-    }
   };
 
   const handleFileInputChange = (e) => {
@@ -101,12 +92,11 @@ export default function ChatInput() {
     });
   };
 
-  const isUploadingAny = attachments.some((a) => a.isUploading);
   const hasText = inputText.trim().length > 0;
   const hasAttachments = attachments.length > 0;
-  const canSend = (hasText || hasAttachments) && !isUploadingAny;
+  const canSend = hasText || hasAttachments;
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (isStreaming) {
       stopStream();
       return;
@@ -114,15 +104,18 @@ export default function ChatInput() {
     if (!canSend) return;
 
     const text = inputText.trim();
-    const imagePaths = attachments.map((a) => a.serverPath).filter(Boolean);
-    const imagePreviews = attachments.map((a) => a.previewUrl);
+    // Read each attached File as base64 inline image blocks. Backend passes these
+    // straight to the SDK as `{type: "image", source: {type: "base64", ...}}`.
+    const imageData = await Promise.all(
+      attachments.map((a) => fileToBase64Image(a.file))
+    );
 
     setInputText('');
     setAttachments([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-    sendMessage(text, imagePaths, imagePreviews);
+    sendMessage(text, [], imageData);
   };
 
   const handleKeyDown = (e) => {
@@ -184,23 +177,6 @@ export default function ChatInput() {
                     alt="Upload thumbnail"
                     className="w-full h-full object-cover select-none"
                   />
-                  {att.isUploading && (
-                    <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                      <svg className="w-4 h-4 text-brand animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                        />
-                      </svg>
-                    </div>
-                  )}
-                  {att.error && (
-                    <div className="absolute inset-0 bg-red-950/80 flex items-center justify-center p-0.5 text-center text-[9px] text-red-300">
-                      Failed
-                    </div>
-                  )}
                   <button
                     type="button"
                     onClick={() => removeAttachment(att.id)}
