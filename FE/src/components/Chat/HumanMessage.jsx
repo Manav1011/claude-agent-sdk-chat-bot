@@ -2,6 +2,8 @@ import React, { memo } from 'react';
 
 function HumanMessage({ content, images, onPreviewImage }) {
   const hasImages = Array.isArray(images) && images.length > 0;
+  // images[] elements are `{data, media_type}` base64 dicts — render as a data URL.
+  const toSrc = (img) => (typeof img === 'string' ? img : `data:${img.media_type};base64,${img.data}`);
 
   return (
     <div className="animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0">
@@ -12,12 +14,12 @@ function HumanMessage({ content, images, onPreviewImage }) {
               {images.map((img, idx) => (
                 <div
                   key={idx}
-                  onClick={() => onPreviewImage?.(img)}
+                  onClick={() => onPreviewImage?.(toSrc(img))}
                   className="relative group/img overflow-hidden rounded-lg border border-dark-border/60 bg-dark-bg cursor-pointer aspect-video max-h-48 sm:max-h-56"
                   title="Click to preview"
                 >
                   <img
-                    src={img}
+                    src={toSrc(img)}
                     alt="Attachment"
                     className="w-full h-full object-cover transition-transform duration-200 group-hover/img:scale-105"
                   />
