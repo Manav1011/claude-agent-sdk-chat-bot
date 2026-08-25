@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useChat } from '../../context/ChatContext';
 
 export default function TabBar() {
@@ -7,6 +7,10 @@ export default function TabBar() {
     currentThreadId,
     selectSession,
     closeTab,
+    closeOtherTabs,
+    closeTabsToLeft,
+    closeTabsToRight,
+    closeAllTabs,
     startNewChat,
     activeProjectId,
     projects,
@@ -16,6 +20,7 @@ export default function TabBar() {
   } = useChat();
 
   const scrollRef = useRef(null);
+  const [contextMenu, setContextMenu] = useState(null); // { x, y, tab, tabsToRightCount, tabsToLeftCount }
 
   // Auto-scroll active tab into view
   useEffect(() => {
@@ -25,6 +30,25 @@ export default function TabBar() {
       activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
     }
   }, [currentThreadId]);
+
+  // Close the right-click menu on outside click or Escape.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onClick = (e) => {
+      // Only close for clicks outside the menu.
+      if (e.target.closest?.('[data-tab-context-menu]')) return;
+      setContextMenu(null);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [contextMenu]);
 
   if (!openTabs || openTabs.length === 0) {
     return null;
@@ -73,6 +97,16 @@ export default function TabBar() {
                 } else {
                   startNewChat(tab.projectId);
                 }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  tab,
+                  tabsToRightCount: openTabs.length - 1 - idx,
+                  tabsToLeftCount: idx,
+                });
               }}
               className={`group h-6 sm:h-7 px-2 sm:px-2.5 rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all duration-150 shrink-0 max-w-[145px] sm:max-w-[190px] border ${
                 isActive
@@ -151,6 +185,50 @@ export default function TabBar() {
           </svg>
         </button>
       </div>
+
+      {/* Right-click context menu for tab management */}
+      {contextMenu && (
+        <div
+          data-tab-context-menu
+          className="fixed z-50 bg-dark-surface/95 backdrop-blur-md border border-dark-border/80 rounded-lg shadow-2xl py-1 min-w-[180px] text-xs"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            disabled={openTabs.length <= 1}
+            onClick={() => { closeOtherTabs(contextMenu.tab.threadId); setContextMenu(null); }}
+            className="w-full text-left px-3 py-1.5 hover:bg-dark-elevated text-txt-main disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+          >
+            Close other tabs
+          </button>
+          <button
+            type="button"
+            disabled={contextMenu.tabsToRightCount === 0}
+            onClick={() => { closeTabsToRight(contextMenu.tab.threadId); setContextMenu(null); }}
+            className="w-full text-left px-3 py-1.5 hover:bg-dark-elevated text-txt-main disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+          >
+            Close tabs to the right
+          </button>
+          <button
+            type="button"
+            disabled={contextMenu.tabsToLeftCount === 0}
+            onClick={() => { closeTabsToLeft(contextMenu.tab.threadId); setContextMenu(null); }}
+            className="w-full text-left px-3 py-1.5 hover:bg-dark-elevated text-txt-main disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+          >
+            Close tabs to the left
+          </button>
+          <div className="border-t border-dark-border/60 my-1" />
+          <button
+            type="button"
+            disabled={openTabs.length === 0}
+            onClick={() => { closeAllTabs(); setContextMenu(null); }}
+            className="w-full text-left px-3 py-1.5 hover:bg-rose-500/15 text-rose-300 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+          >
+            Close all tabs
+          </button>
+        </div>
+      )}
     </div>
   );
 }

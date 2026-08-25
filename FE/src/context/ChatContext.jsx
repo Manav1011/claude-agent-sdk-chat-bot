@@ -732,6 +732,48 @@ export function ChatProvider({ children }) {
     });
   }, [currentThreadId, selectSession, startNewChat]);
 
+  // Close every tab except `keepThreadId`. If the kept tab isn't the active one,
+  // switch the active session to it.
+  const closeOtherTabs = useCallback((keepThreadId) => {
+    setOpenTabs((prevTabs) => {
+      const kept = prevTabs.find((t) => t.threadId === keepThreadId);
+      if (!kept) return prevTabs;
+      return [kept];
+    });
+    if (currentThreadId !== keepThreadId) {
+      const kept = (openTabs || []).find((t) => t.threadId === keepThreadId);
+      if (kept?.threadId) {
+        selectSession(kept.threadId, kept.projectId);
+      } else {
+        startNewChat(kept?.projectId);
+      }
+    }
+  }, [currentThreadId, openTabs, selectSession, startNewChat]);
+
+  // Close every tab to the right of `keepThreadId` (inclusive of the tab's right neighbors).
+  const closeTabsToRight = useCallback((keepThreadId) => {
+    setOpenTabs((prevTabs) => {
+      const idx = prevTabs.findIndex((t) => t.threadId === keepThreadId);
+      if (idx === -1) return prevTabs;
+      return prevTabs.slice(0, idx + 1);
+    });
+  }, []);
+
+  // Close every tab to the left of `keepThreadId`.
+  const closeTabsToLeft = useCallback((keepThreadId) => {
+    setOpenTabs((prevTabs) => {
+      const idx = prevTabs.findIndex((t) => t.threadId === keepThreadId);
+      if (idx === -1) return prevTabs;
+      return prevTabs.slice(idx);
+    });
+  }, []);
+
+  // Close every tab. Falls back to a fresh "new conversation" tab.
+  const closeAllTabs = useCallback(() => {
+    setOpenTabs([]);
+    startNewChat();
+  }, [startNewChat]);
+
   // Load Older Messages on scroll
   const loadOlderMessages = useCallback(async (threadId = currentThreadId) => {
     if (!threadId || isLoadingOlder[threadId] || !sessionCursors[threadId]) return;
@@ -1147,6 +1189,10 @@ export function ChatProvider({ children }) {
     currentThreadId,
     openTabs,
     closeTab,
+    closeOtherTabs,
+    closeTabsToLeft,
+    closeTabsToRight,
+    closeAllTabs,
     activeStreams,
     messages,
     sessionCursors,
