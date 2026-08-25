@@ -171,6 +171,14 @@ _SESSION_IDLE_TIMEOUT = 30 * 60  # seconds; ponytail: simple global, configurabl
 class _UserMessage(BaseModel):
     content: str
     images: list[dict] | None = None  # Phase 6: [{data, media_type}] base64
+    # Session-startup settings. The BE locks these in on the first message
+    # (the SDK client is built lazily and only initializes once per session).
+    # Subsequent messages in the same session send these but the BE ignores
+    # them — the agent's system_prompt / skill set / permission mode cannot
+    # be changed mid-stream without tearing down the SDK client.
+    setting_sources: list[SettingSource] | None = None
+    skills: list[str] | Literal["all"] | None = None
+    permission_mode: Literal["read_only", "bypassPermissions"] | None = None
 
 
 class SessionLoop:
@@ -189,6 +197,11 @@ class SessionLoop:
         # legacy event shape (/api/chat emits). Mirrors the legacy response_reader logic.
         self._pending_tools: dict[int, dict] = {}
         self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        # Settings locked in on the first message. None until then, then a
+        # frozen dict the SDK client is built with. Late messages with new
+        # settings are ignored — the client is already running with the locked
+        # set, and rebuilding would lose the conversation context.
+        self._locked_settings: dict | None = None
 
     def _touch(self):
         self._last_activity = asyncio.get_event_loop().time()
@@ -338,10 +351,14 @@ class SessionLoop:
         # with "Session ID ... is already in use" (the file already existed).
         project_key = _sdk_project_key(self.workspace)
         jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{self.session_id}.jsonl"
+        s = self._locked_settings or {}
         opts = _build_options(
             workspace=self.workspace,
             session_id=self.session_id,
             resume=jsonl_path.exists(),
+            setting_sources=s.get("setting_sources"),
+            skills=s.get("skills"),
+            permission_mode=s.get("permission_mode"),
         )
         opts.can_use_tool = self._make_can_use_tool()
         client = ClaudeSDKClient(options=opts)
@@ -355,6 +372,15 @@ class SessionLoop:
 
         while self._running:
             msg = await self._incoming.get()
+            # Lock session-startup settings on the first message. Subsequent
+            # messages carry the same fields but the client is already running,
+            # so we deliberately don't rebuild.
+            if self._locked_settings is None:
+                self._locked_settings = {
+                    "setting_sources": msg.setting_sources,
+                    "skills": msg.skills,
+                    "permission_mode": msg.permission_mode,
+                }
             # Reset per-turn state so each enqueued user message starts fresh.
             self._pending_tools = {}
             self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}

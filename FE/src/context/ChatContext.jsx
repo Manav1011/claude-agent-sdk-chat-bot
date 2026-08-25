@@ -878,7 +878,7 @@ export function ChatProvider({ children }) {
 
   // Send Message & Stream — streaming-input mode: POST message to long-lived SSE session,
   // event handler processes responses via openSessionStream subscription.
-  const sendMessage = useCallback(async (text, imagePaths = [], imagePreviews = []) => {
+  const sendMessage = useCallback(async (text, imagePaths = [], imagePreviews = [], settings = null) => {
     const cleanText = (text || '').trim();
     if (!cleanText && (!imagePaths || imagePaths.length === 0)) return;
 
@@ -964,6 +964,9 @@ export function ChatProvider({ children }) {
         workspace: getWorkspacePath(),
         content: cleanText,
         images: userImages,
+        settingSources: settings?.settingSources,
+        skills: settings?.skills,
+        permissionMode: settings?.permissionMode,
       });
     } catch (err) {
       setErrorMessage(err.message || 'Failed to send message');

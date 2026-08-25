@@ -23,7 +23,7 @@ function fileToBase64Image(file) {
 }
 
 export default function ChatInput() {
-  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote } = useChat();
+  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode } = useChat();
   const [inputText, setInputText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -123,7 +123,14 @@ export default function ChatInput() {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-    sendMessage(finalText, [], imageData);
+    // ponytail: skillsMode='all' is the SDK's "all" sentinel; otherwise pass the
+    // user-curated list. null means "use SDK defaults" (current BE behavior).
+    const skillsForSend = skillsMode === 'all' ? 'all' : (skillsList || null);
+    sendMessage(finalText, [], imageData, {
+      settingSources,
+      skills: skillsForSend,
+      permissionMode,
+    });
   };
 
   const handleKeyDown = (e) => {

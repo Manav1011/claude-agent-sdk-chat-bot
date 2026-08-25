@@ -175,11 +175,17 @@ export async function* streamChatApi({
 
 // --- Streaming-input mode helpers (long-lived SSE session) ---
 
-export async function sendSessionMessage({ threadId, workspace, content, images = null, signal }) {
+export async function sendSessionMessage({ threadId, workspace, content, images = null, settingSources, skills, permissionMode, signal }) {
   const res = await fetch(`/api/sessions/${threadId}/messages?workspace=${encodeURIComponent(workspace)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, images }),
+    body: JSON.stringify({
+      content,
+      images,
+      setting_sources: settingSources ?? null,
+      skills: skills ?? null,
+      permission_mode: permissionMode ?? null,
+    }),
     signal,
   });
   if (!res.ok) {
