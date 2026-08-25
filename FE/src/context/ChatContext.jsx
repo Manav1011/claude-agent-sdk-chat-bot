@@ -71,6 +71,9 @@ export function ChatProvider({ children }) {
   const [permissionMode, setPermissionMode] = useState(() => {
     return localStorage.getItem('qa-permission-mode') || null;
   });
+  const [expandThoughts, setExpandThoughts] = useState(() => {
+    return localStorage.getItem('qa-expand-thoughts') === 'true';
+  });
 
   // Streaming & Context usage (per-session streaming state)
   const [contextUsage, setContextUsage] = useState(null);
@@ -785,6 +788,33 @@ export function ChatProvider({ children }) {
     }
   }, [currentThreadId, stopSpeechAudio, startNewChat]);
 
+  const stopStream = useCallback(async (targetThreadId) => {
+    const threadId = (typeof targetThreadId === 'string' && targetThreadId) ? targetThreadId : currentThreadId;
+    if (!threadId) return;
+    // New: tell the backend SessionLoop to interrupt the agent mid-turn.
+    // (Old abort-controller approach only tore down the SSE reader; the subprocess kept running.)
+    try {
+      const ws = getWorkspacePath();
+      if (ws) {
+        await interruptSession({ threadId, workspace: ws });
+      }
+    } catch (err) {
+      console.error('interruptSession failed', err);
+    }
+    // Clean up the legacy abort-controller entries just in case.
+    if (abortControllersRef.current[threadId]) {
+      try { abortControllersRef.current[threadId].abort(); } catch (_) {}
+      delete abortControllersRef.current[threadId];
+    }
+    // Clear per-thread stream state so UI stops showing it.
+    delete streamBuffersRef.current[threadId];
+    setActiveStreams(prev => {
+      const next = { ...prev };
+      delete next[threadId];
+      return next;
+    });
+  }, [currentThreadId, getWorkspacePath]);
+
   // Send Message & Stream — streaming-input mode: POST message to long-lived SSE session,
   // event handler processes responses via openSessionStream subscription.
   const sendMessage = useCallback(async (text, imagePaths = [], imagePreviews = []) => {
@@ -792,6 +822,14 @@ export function ChatProvider({ children }) {
     if (!cleanText && (!imagePaths || imagePaths.length === 0)) return;
 
     let sessionThreadId = currentThreadId;
+
+    // Auto-interrupt if a turn is currently streaming for this session.
+    // Read the ref (not activeStreams state) so we see the live in-flight
+    // buffer instead of a stale closure snapshot.
+    if (sessionThreadId && streamBuffersRef.current[sessionThreadId]) {
+      await stopStream(sessionThreadId);
+    }
+
     const isNewSession = !sessionThreadId;
     if (!sessionThreadId) {
       // Backend requires UUID for /api/sessions/{id}/... — use getRandomValues (works in
@@ -875,6 +913,7 @@ export function ChatProvider({ children }) {
     openSessionStream,
     getWorkspacePath,
     setCurrentThread,
+    stopStream,
   ]);
 
   // Session Event Handler — converts events from the long-lived SessionLoop SSE into React state.
@@ -1084,33 +1123,6 @@ export function ChatProvider({ children }) {
     }));
   }, [setCurrentThread]);
 
-  const stopStream = useCallback(async (targetThreadId) => {
-    const threadId = (typeof targetThreadId === 'string' && targetThreadId) ? targetThreadId : currentThreadId;
-    if (!threadId) return;
-    // New: tell the backend SessionLoop to interrupt the agent mid-turn.
-    // (Old abort-controller approach only tore down the SSE reader; the subprocess kept running.)
-    try {
-      const ws = getWorkspacePath();
-      if (ws) {
-        await interruptSession({ threadId, workspace: ws });
-      }
-    } catch (err) {
-      console.error('interruptSession failed', err);
-    }
-    // Clean up the legacy abort-controller entries just in case.
-    if (abortControllersRef.current[threadId]) {
-      try { abortControllersRef.current[threadId].abort(); } catch (_) {}
-      delete abortControllersRef.current[threadId];
-    }
-    // Clear per-thread stream state so UI stops showing it.
-    delete streamBuffersRef.current[threadId];
-    setActiveStreams(prev => {
-      const next = { ...prev };
-      delete next[threadId];
-      return next;
-    });
-  }, [currentThreadId, getWorkspacePath]);
-
   // Initial mount
   useEffect(() => {
     loadProjects().then(() => {
@@ -1186,6 +1198,11 @@ export function ChatProvider({ children }) {
       setPermissionMode(val);
       if (val) localStorage.setItem('qa-permission-mode', val);
       else localStorage.removeItem('qa-permission-mode');
+    },
+    expandThoughts,
+    setExpandThoughts: (val) => {
+      setExpandThoughts(val);
+      localStorage.setItem('qa-expand-thoughts', String(val));
     },
     setIsSettingsOpen,
     setIsContextModalOpen,

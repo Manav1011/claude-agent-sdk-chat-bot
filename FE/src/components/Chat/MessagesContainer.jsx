@@ -26,6 +26,7 @@ export default function MessagesContainer() {
     pendingPermissions,
     loadOlderMessages,
     setPreviewModalImage,
+    expandThoughts,
   } = useChat();
 
   const containerRef = useRef(null);
@@ -178,7 +179,7 @@ export default function MessagesContainer() {
           );
         }
         if (msg.type === 'thinking') {
-          return <ThinkingMessage key={key} content={msg.content} />;
+          return <ThinkingMessage key={key} content={msg.content} defaultOpen={expandThoughts} />;
         }
         if (msg.type === 'tool' || msg.type === 'tool_result') {
           return <ToolCallMessage key={key} tool={msg} />;
