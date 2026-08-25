@@ -788,9 +788,12 @@ export function ChatProvider({ children }) {
     let sessionThreadId = currentThreadId;
     const isNewSession = !sessionThreadId;
     if (!sessionThreadId) {
-      sessionThreadId = typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      // Backend requires UUID for /api/sessions/{id}/... — use getRandomValues (works in
+      // non-secure contexts) with a randomUUID fast-path.
+      sessionThreadId = (crypto.randomUUID && crypto.randomUUID())
+        // eslint-disable-next-line no-bitwise
+        || ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+            (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c/4).toString(16));
       setCurrentThread(sessionThreadId);
     }
 
