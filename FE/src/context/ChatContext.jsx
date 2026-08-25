@@ -148,9 +148,14 @@ export function ChatProvider({ children }) {
   }, [currentThreadId]);
 
   const respondToPermission = useCallback(async (requestId, decision, payload = {}) => {
+    // Look up the session_id of the request before mutating state so we can
+    // pass it to the BE — the BE handler uses (session_id, request_id) as the
+    // future key, and the FE without session_id would force a scan.
+    const sessionId = pendingPermissions.find((r) => r.request_id === requestId)?.session_id;
     try {
       await submitPermissionDecision({
         requestId,
+        sessionId,
         decision,
         updatedInput: payload.updatedInput,
         answers: payload.answers,
@@ -162,7 +167,16 @@ export function ChatProvider({ children }) {
         decision === 'allow' ? 'success' : 'info'
       );
     } catch (e) {
-      showNotification(e.message || 'Failed to submit permission decision', 'error');
+      // BE returns 404 when the future has already been resolved (e.g. session
+      // was interrupted while the prompt was open). The prompt is stale — drop
+      // it locally so the user isn't stuck retrying.
+      const msg = e?.message || '';
+      if (msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('already resolved')) {
+        setPendingPermissions(prev => prev.filter(r => r.request_id !== requestId));
+        showNotification('Permission already resolved', 'info');
+        return;
+      }
+      showNotification(msg || 'Failed to submit permission decision', 'error');
       throw e;
     }
   }, [showNotification]);
@@ -991,9 +1005,14 @@ export function ChatProvider({ children }) {
         [sessionThreadId]: { ...(prev[sessionThreadId] || {}), isAiResponding: false },
       }));
       const reqItem = { ...data, session_id: data.session_id || sessionThreadId };
-      setPendingPermissions((prev) => (
-        prev.some((r) => r.request_id === data.request_id) ? prev : [...prev, reqItem]
-      ));
+      setPendingPermissions((prev) => {
+        if (prev.some((r) => r.request_id === data.request_id)) {
+          // SDK retry of an already-known request — log so it doesn't fail silently.
+          console.warn(`[permission] duplicate request_id ${data.request_id} - ignoring`);
+          return prev;
+        }
+        return [...prev, reqItem];
+      });
       return;
     }
 

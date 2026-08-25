@@ -33,9 +33,9 @@ from claude_agent_sdk.types import (
 from schemas import Project, ProjectCreate, ProjectsListResponse, ProjectSessionsResponse, SessionResponse
 
 HOST = "0.0.0.0"
-PORT = 8227
+PORT = 8225
 
-LLM_MODEL = os.environ.get("LLM_MODEL", "ornith-1.0")
+LLM_MODEL = os.environ.get("LLM_MODEL", "MiniMaxAI/MiniMax-M3")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjgyNTk1NTQ1LTAyMDYtNGVlMy1hMjg3LTZhM2RiYjI2OTQzNSIsInNjb3BlIjoiaWVfbW9kZWwiLCJwcm9kdWN0IjoiSUUiLCJvd25lcklkIjoiZDNkY2VjMjgtMjQ5MS00NmU1LWI2YmYtZDcyYzg0YmRmZGEyIn0._R-wta0JXQRi3FbA7S0IXqC_sT14maRy0CwZ7kl4tM4")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.gmi-serving.com")
 
@@ -213,6 +213,11 @@ class SessionLoop:
         self._touch()
 
     async def interrupt(self):
+        # ponytail: resolve dangling permission futures BEFORE we cancel the
+        # reader task — otherwise the agent's `wait_for(fut)` is cancelled mid-
+        # flight and the future sits in _permission_futures until the 300s
+        # timeout. Mirrors the legacy /api/chat finally block.
+        self._resolve_pending_permissions("deny", "Session interrupted")
         if self._client is not None:
             try:
                 await self._client.interrupt()
@@ -221,6 +226,7 @@ class SessionLoop:
 
     async def shutdown(self):
         self._running = False
+        self._resolve_pending_permissions("deny", "Session ended")
         if self._task and not self._task.done():
             self._task.cancel()
         if self._client is not None:
@@ -229,6 +235,21 @@ class SessionLoop:
             except Exception:
                 pass
             self._client = None
+
+    def _resolve_pending_permissions(self, decision: str, message: str):
+        """Resolve every pending permission future for this session and pop it
+        from the dict immediately so the next user action doesn't pick up a
+        stale request. The can_use_tool callback's `finally` block will see
+        an empty slot and skip the duplicate pop."""
+        for key, fut in list(_permission_futures.items()):
+            if key[0] != self.session_id or fut.done():
+                continue
+            try:
+                fut.set_result({"decision": decision, "message": message})
+            except Exception as e:
+                print(f"[WARN] failed to resolve permission {key}: {e}")
+            _permission_futures.pop(key, None)
+            _permission_meta.pop(key, None)
 
     async def _broadcast(self, event):
         # Accept either a dict (already in FE event shape) or an SDK Message object.
@@ -261,7 +282,7 @@ class SessionLoop:
         loop_ref = self
 
         async def can_use_tool(tool_name: str, tool_input: dict, context: ToolPermissionContext):
-            request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex[:8]}"
+            request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex}"
             fut: asyncio.Future = asyncio.Future()
             _permission_futures[(self.session_id, request_id)] = fut
             _permission_meta[(self.session_id, request_id)] = {
@@ -312,10 +333,15 @@ class SessionLoop:
         return can_use_tool
 
     async def _build_client(self) -> ClaudeSDKClient:
+        # ponytail: mirror /api/chat — resume if jsonl exists, else create. The old
+        # hardcoded resume=False made the CLI reject every reconnect after a crash
+        # with "Session ID ... is already in use" (the file already existed).
+        project_key = _sdk_project_key(self.workspace)
+        jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{self.session_id}.jsonl"
         opts = _build_options(
             workspace=self.workspace,
             session_id=self.session_id,
-            resume=False,
+            resume=jsonl_path.exists(),
         )
         opts.can_use_tool = self._make_can_use_tool()
         client = ClaudeSDKClient(options=opts)
@@ -767,6 +793,9 @@ def _build_options(
         env={
             "ANTHROPIC_API_KEY": LLM_API_KEY,
             "ANTHROPIC_BASE_URL": LLM_BASE_URL,
+            "API_TIMEOUT_MS": "3000000",
+            "CLAUDE_CODE_RETRY_WATCHDOG": "1",
+            "CLAUDE_CODE_MAX_RETRIES": "10"
         },
         cwd=workspace,
         resume=session_id if resume else None,
@@ -1222,7 +1251,7 @@ async def chat(request: ChatRequest):
             tool_input: dict,
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
-            request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex[:8]}"
+            request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex}"
             future: asyncio.Future = asyncio.Future()
             _permission_futures[(session_id, request_id)] = future
             meta = {

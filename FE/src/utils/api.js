@@ -58,12 +58,13 @@ export async function fetchPendingPermissions(threadId = null) {
   return res.json();
 }
 
-export async function submitPermissionDecision({ requestId, decision, updatedInput, answers, message }) {
+export async function submitPermissionDecision({ requestId, sessionId, decision, updatedInput, answers, message }) {
   const res = await fetch('/api/permissions/decision', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       request_id: requestId,
+      session_id: sessionId || null,
       decision,
       updated_input: updatedInput || null,
       answers: answers || null,

@@ -74,7 +74,10 @@ export default function MessagesContainer() {
   };
 
   const activePermissions = pendingPermissions.filter(
-    (req) => !req.session_id || !currentThreadId || req.session_id === currentThreadId
+    // Only render prompts that target the currently-active session. The BE
+    // always sets session_id; the legacy `!req.session_id` fallback leaked
+    // prompts from other sessions into a null-current view.
+    (req) => req.session_id && req.session_id === currentThreadId
   );
 
   // Restore scroll position after pagination or scroll to bottom on new message / streaming / permissions
