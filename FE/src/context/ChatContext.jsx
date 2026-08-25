@@ -77,6 +77,12 @@ export function ChatProvider({ children }) {
   const [activeStreams, setActiveStreams] = useState({});
   const abortControllersRef = useRef({});
 
+  // ponytail: SSE handler is registered once per session but its closure's `activeStreams`
+  // reference goes stale on re-render — the `done` handler reads `cur.streamContent` and
+  // commits an empty string. Mirror the latest stream buffers in a ref so the handler
+  // always sees fresh values without depending on closure-captured React state.
+  const streamBuffersRef = useRef({});  // { threadId: { streamContent, thinkingContent, speechExplanation } }
+
   // Per-session EventSource manager for streaming-input mode (one long-lived SSE per session).
   // Map<threadId, { streamManager: { close, subscribe }, unsubscribe }>
   const sessionStreamRef = useRef({});
@@ -916,6 +922,8 @@ export function ChatProvider({ children }) {
     }
 
     if (data.type === 'speech_explanation') {
+      const buf = (streamBuffersRef.current[sessionThreadId] ||= { streamContent: '', thinkingContent: '' });
+      buf.speechExplanation = data.content;
       setActiveStreams(prev => ({
         ...prev,
         [sessionThreadId]: { ...(prev[sessionThreadId] || {}), speechExplanation: data.content },
@@ -924,6 +932,8 @@ export function ChatProvider({ children }) {
     }
 
     if (data.type === 'text_delta') {
+      const buf = (streamBuffersRef.current[sessionThreadId] ||= { streamContent: '', thinkingContent: '' });
+      buf.streamContent += data.content || '';
       setActiveStreams(prev => {
         const cur = prev[sessionThreadId] || {};
         return {
@@ -932,7 +942,7 @@ export function ChatProvider({ children }) {
             ...cur,
             isStreaming: true,
             isAiResponding: false,
-            streamContent: (cur.streamContent || '') + (data.content || ''),
+            streamContent: buf.streamContent,
           },
         };
       });
@@ -940,6 +950,8 @@ export function ChatProvider({ children }) {
     }
 
     if (data.type === 'thinking_delta') {
+      const buf = (streamBuffersRef.current[sessionThreadId] ||= { streamContent: '', thinkingContent: '' });
+      buf.thinkingContent += data.content || '';
       setActiveStreams(prev => {
         const cur = prev[sessionThreadId] || {};
         return {
@@ -948,7 +960,7 @@ export function ChatProvider({ children }) {
             ...cur,
             isStreaming: true,
             isAiResponding: false,
-            thinkingContent: (cur.thinkingContent || '') + (data.content || ''),
+            thinkingContent: buf.thinkingContent,
           },
         };
       });
@@ -957,7 +969,7 @@ export function ChatProvider({ children }) {
 
     if (data.type === 'tool_result' || data.type === 'tool') {
       // Flush accumulated stream into messages before adding the tool entry.
-      const cur = activeStreams[sessionThreadId] || {};
+      const cur = streamBuffersRef.current[sessionThreadId] || {};
       const itemsToCommit = [];
       if (cur.thinkingContent) {
         itemsToCommit.push({ type: 'thinking', content: cur.thinkingContent });
@@ -976,6 +988,8 @@ export function ChatProvider({ children }) {
         }));
       }
 
+      // Reset buffers but keep speechExplanation until next speech event.
+      streamBuffersRef.current[sessionThreadId] = { streamContent: '', thinkingContent: '', speechExplanation: cur.speechExplanation || null };
       setActiveStreams(prev => ({
         ...prev,
         [sessionThreadId]: {
@@ -1031,7 +1045,8 @@ export function ChatProvider({ children }) {
     }
 
     if (data.type === 'done') {
-      const cur = activeStreams[sessionThreadId] || {};
+      // Read from ref — closure's `activeStreams` is stale (see streamBuffersRef comment).
+      const cur = streamBuffersRef.current[sessionThreadId] || {};
       const itemsToCommit = [];
       if (cur.thinkingContent) {
         itemsToCommit.push({ type: 'thinking', content: cur.thinkingContent });
@@ -1050,6 +1065,7 @@ export function ChatProvider({ children }) {
           [sessionThreadId]: [...(prev[sessionThreadId] || []), ...itemsToCommit],
         }));
       }
+      delete streamBuffersRef.current[sessionThreadId];
       setActiveStreams(prev => {
         const next = { ...prev };
         delete next[sessionThreadId];
@@ -1066,7 +1082,7 @@ export function ChatProvider({ children }) {
       ...prev,
       [sessionThreadId]: [...(prev[sessionThreadId] || []), data],
     }));
-  }, [activeStreams, setCurrentThread]);
+  }, [setCurrentThread]);
 
   const stopStream = useCallback(async (targetThreadId) => {
     const threadId = (typeof targetThreadId === 'string' && targetThreadId) ? targetThreadId : currentThreadId;
@@ -1087,6 +1103,7 @@ export function ChatProvider({ children }) {
       delete abortControllersRef.current[threadId];
     }
     // Clear per-thread stream state so UI stops showing it.
+    delete streamBuffersRef.current[threadId];
     setActiveStreams(prev => {
       const next = { ...prev };
       delete next[threadId];
