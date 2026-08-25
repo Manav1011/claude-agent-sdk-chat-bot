@@ -287,7 +287,8 @@ class SessionLoop:
                 for img in msg.images:
                     blocks.append({"type": "image", "source": {"type": "base64", "media_type": img["media_type"], "data": img["data"]}})
                 content = blocks
-            yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None, "session_id": self.session_id}
+            # SDK requires {type, message:{role,content}, parent_tool_use_id} structure
+            yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}
         return gen()
 
     def _make_can_use_tool(self):
@@ -387,7 +388,7 @@ class SessionLoop:
             try:
                 if self._client is None:
                     self._client = await self._build_client()
-                await self._client.query(self._make_generator(msg), session_id=self.session_id)
+                await self._client.query(self._make_generator(msg))
                 async for sdk_event in self._client.receive_response():
                     for legacy in self._translate_sdk_message(sdk_event, jsonl_path, jsonl_size_before):
                         await self._broadcast(legacy)
@@ -407,17 +408,6 @@ class SessionLoop:
         """Mirror legacy /api/chat response_reader: turn SDK events into the legacy event dicts
         the frontend already understands (text_delta, thinking_delta, tool_result, done, ...).
         Yields zero or more legacy event dicts."""
-        # AssistantMessage — final text/thinking content for this turn (e.g. "API Error: ..."
-        # arrives as AssistantMessage, not StreamEvent delta — stream it so FE sees it live).
-        from claude_agent_sdk import AssistantMessage, TextBlock
-        if isinstance(sdk_event, AssistantMessage):
-            # Only emit TextBlock from AssistantMessage when it looks like an error —
-            # normal text is already streamed via StreamEvent before this arrives.
-            for block in sdk_event.content:
-                if isinstance(block, TextBlock) and block.text:
-                    if "API Error" in block.text or "error" in block.text.lower():
-                        yield {"type": "text_delta", "content": block.text}
-            return
         # StreamEvent with delta payloads.
         if isinstance(sdk_event, StreamEvent):
             evt = sdk_event.event
@@ -823,10 +813,6 @@ def _build_options(
     # read_only semantics: run on default permission checks but only expose the
     # read-only tools so no write/executable tool can ever be called.
     read_only = permission_mode == "read_only"
-    # ponytail: SDK hangs when skills=[] (empty list); coerce to None so it uses defaults.
-    if skills == []:
-        skills = None
-    print(f"[SDK_OPTS] session_id={session_id} setting_sources={setting_sources} skills={skills} permission_mode={permission_mode} read_only={read_only}")
     opts = ClaudeAgentOptions(
         model=LLM_MODEL,
         system_prompt=system_prompt,
@@ -889,8 +875,6 @@ class SessionResponse(BaseModel):
     thread_id: str
     first_message: str
     created_at: str | None = None
-    # ponytail: ms-since-epoch from SDK; used by FE sidebar for time buckets + sort.
-    last_modified: int | None = None
 
 
 class SessionsListResponse(BaseModel):
@@ -970,7 +954,6 @@ async def list_sessions(project_id: int | None = None):
             thread_id=s.session_id,
             first_message=s.summary or s.first_prompt or s.session_id,
             created_at=str(s.created_at) if s.created_at else None,
-            last_modified=s.last_modified,
         )
         for s in raw
     ]
@@ -1080,7 +1063,6 @@ async def get_project_sessions(project_id: int):
             thread_id=s.session_id,
             first_message=s.summary or s.first_prompt or s.session_id,
             created_at=str(s.created_at) if s.created_at else None,
-            last_modified=s.last_modified,
         )
         for s in raw
     ]
@@ -1612,7 +1594,6 @@ async def post_session_message(
         uuid.UUID(session_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="session_id must be a UUID")
-    print(f"[FE_OPTS] {session_id} setting_sources={body.setting_sources} skills={body.skills} permission_mode={body.permission_mode}")
     loop = await get_or_create_loop(workspace, session_id)
     await loop.enqueue(body)
     return {"status": "queued", "session_id": session_id}

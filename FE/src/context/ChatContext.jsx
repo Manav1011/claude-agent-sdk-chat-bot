@@ -90,6 +90,11 @@ export function ChatProvider({ children }) {
   // Map<threadId, { streamManager: { close, subscribe }, unsubscribe }>
   const sessionStreamRef = useRef({});
 
+  // ponytail: first time the SDK emits for a brand-new threadId (one not yet in
+  // projectSessions), refresh the workspace's session list once so it shows up
+  // in the sidebar without a page reload. Cleared when the user changes projects.
+  const sidebarRefreshedForRef = useRef(new Set());
+
   // Computed streaming state for current active thread
   const activeStreamContent = (currentThreadId && activeStreams[currentThreadId]?.streamContent) || '';
   const activeThinkingContent = (currentThreadId && activeStreams[currentThreadId]?.thinkingContent) || '';
@@ -997,6 +1002,19 @@ export function ChatProvider({ children }) {
 
     if (event !== 'message') return;
 
+    // ponytail: SDK CLI writes the JSONL row on first turn — once we see a real
+    // event for a thread that's not yet in the sidebar, refresh that workspace
+    // once so the new session appears without a reload.
+    if (activeProjectId && !sidebarRefreshedForRef.current.has(sessionThreadId)) {
+      const list = projectSessions[activeProjectId] || [];
+      if (!list.some((s) => s.thread_id === sessionThreadId)) {
+        sidebarRefreshedForRef.current.add(sessionThreadId);
+        loadProjectSessions(activeProjectId);
+      } else {
+        sidebarRefreshedForRef.current.add(sessionThreadId);
+      }
+    }
+
     if (data.type === 'context_usage') {
       setContextUsage(data.data);
       return;
@@ -1190,7 +1208,7 @@ export function ChatProvider({ children }) {
       ...prev,
       [sessionThreadId]: [...(prev[sessionThreadId] || []), data],
     }));
-  }, [setCurrentThread]);
+  }, [setCurrentThread, activeProjectId, projectSessions, loadProjectSessions]);
 
   // Initial mount
   useEffect(() => {
@@ -1206,6 +1224,11 @@ export function ChatProvider({ children }) {
   useEffect(() => {
     return () => closeAllSessionStreams();
   }, [closeAllSessionStreams]);
+
+  // ponytail: switching workspaces should re-arm the one-shot sidebar refresh.
+  useEffect(() => {
+    sidebarRefreshedForRef.current = new Set();
+  }, [activeProjectId]);
 
   const value = {
     projects,

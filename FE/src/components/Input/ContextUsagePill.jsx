@@ -19,10 +19,12 @@ export default function ContextUsagePill() {
       type="button"
       onClick={() => setIsContextModalOpen(true)}
       title="View context window breakdown"
-      className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-dark-elevated/70 hover:bg-dark-elevated border border-dark-border/60 hover:border-brand/40 text-[11px] font-mono transition-all group shrink-0 cursor-pointer"
+      // ponytail: on mobile, just a colored dot in a small square — no text.
+      // The full "% context" pill is too wide (~88px) for the input toolbar at 430px.
+      className="flex items-center gap-1 sm:gap-1.5 justify-center h-7 w-7 sm:w-auto sm:h-auto sm:px-2 sm:py-0.5 rounded-lg bg-dark-elevated/70 hover:bg-dark-elevated border border-dark-border/60 hover:border-brand/40 text-[11px] font-mono transition-all group shrink-0 cursor-pointer"
     >
       <span className={dotClass} />
-      <span className="text-txt-muted group-hover:text-white font-medium">
+      <span className="hidden sm:inline text-txt-muted group-hover:text-white font-medium">
         {pct}% context
       </span>
     </button>

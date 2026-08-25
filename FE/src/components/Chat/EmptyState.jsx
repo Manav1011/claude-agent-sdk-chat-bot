@@ -2,50 +2,58 @@ import React from 'react';
 import { useChat } from '../../context/ChatContext';
 
 export default function EmptyState() {
-  const { sendMessage } = useChat();
+  const { activeProjectId, projects, projectSessions } = useChat();
+  const activeProject = projects.find((p) => p.id === activeProjectId);
+  const sessionCount = (activeProjectId && projectSessions[activeProjectId]?.length) || 0;
 
   return (
-    <div className="h-full flex flex-col items-center justify-center text-center my-auto py-10 w-full max-w-3xl lg:max-w-4xl mx-auto">
-      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-brand/20 to-amber-500/10 border border-brand/30 flex items-center justify-center mb-4 shadow-glow">
-        <svg className="w-6 h-6 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div className="h-full flex flex-col items-center justify-center text-center my-auto px-6 py-10 w-full max-w-[65ch] sm:max-w-2xl lg:max-w-4xl mx-auto">
+      {/* ponytail: smaller hero on mobile — the original 48px square felt oversized at
+          430px width and pushed the project name off the visible area. */}
+      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-brand/20 to-amber-500/10 border border-brand/30 flex items-center justify-center mb-3 sm:mb-4 shadow-glow">
+        <svg className="w-5 h-5 sm:w-6 sm:h-6 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth="1.75"
-            d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
           />
         </svg>
       </div>
-      <h2 className="text-base sm:text-lg font-semibold text-white mb-1.5">
-        What would you like to explore?
-      </h2>
-      <p className="text-txt-muted text-xs sm:text-sm max-w-md mb-6 leading-relaxed">
-        Ask questions, run automation workflows, or explore spoken AI explanations.
-      </p>
 
-      {/* Prompt Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-md">
-        <button
-          type="button"
-          onClick={() => sendMessage('What skills do you have?')}
-          className="prompt-chip text-left p-3 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand/30 transition-all duration-200 group cursor-pointer"
-        >
-          <div className="font-medium text-xs text-white group-hover:text-brand mb-0.5">
-            What skills do you have?
+      {activeProject ? (
+        <>
+          <div className="flex items-center gap-1.5 text-[11px] text-brand font-medium leading-none mb-1.5 uppercase tracking-wider">
+            <span>Active workspace</span>
           </div>
-          <div className="text-[11px] text-txt-subtle truncate">List all installed capabilities</div>
-        </button>
-        <button
-          type="button"
-          onClick={() => sendMessage('Explain Machine Learning')}
-          className="prompt-chip text-left p-3 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand/30 transition-all duration-200 group cursor-pointer"
-        >
-          <div className="font-medium text-xs text-white group-hover:text-brand mb-0.5">
-            Explain Machine Learning
-          </div>
-          <div className="text-[11px] text-txt-subtle truncate">Get a clear explanation with voice audio</div>
-        </button>
-      </div>
+          <h2 className="text-base sm:text-lg font-semibold text-white mb-1.5 break-words">
+            {activeProject.name}
+          </h2>
+          <p
+            className="text-txt-subtle text-[10.5px] sm:text-[11px] font-mono max-w-md mb-2 truncate px-4"
+            title={activeProject.path}
+          >
+            {activeProject.path}
+          </p>
+          <p className="text-txt-muted text-xs sm:text-sm max-w-md mb-1 leading-relaxed">
+            {sessionCount === 0
+              ? 'No conversations yet.'
+              : `${sessionCount} conversation${sessionCount === 1 ? '' : 's'} in this workspace.`}
+          </p>
+          <p className="text-txt-subtle text-[11px] sm:text-xs mt-4 sm:mt-6 max-w-md">
+            Type a message below to start a new conversation.
+          </p>
+        </>
+      ) : (
+        <>
+          <h2 className="text-base sm:text-lg font-semibold text-white mb-1.5">
+            No workspace selected
+          </h2>
+          <p className="text-txt-muted text-xs sm:text-sm max-w-md mb-4 sm:mb-6 leading-relaxed">
+            Add a project from the sidebar to start chatting.
+          </p>
+        </>
+      )}
     </div>
   );
 }

@@ -1,10 +1,22 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useChat } from '../../context/ChatContext';
 import SessionItem from './SessionItem';
 
+const STORAGE_KEY = 'qa-sidebar-expanded-projects';
+const RECENT_LIMIT = 5;
+
+function readExpandedSet() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw));
+  } catch {
+    return new Set();
+  }
+}
+
 export default function ProjectItem({ project }) {
   const {
-    activeProjectId,
     expandedProjects,
     loadingProjects,
     projectSessions,
@@ -15,9 +27,21 @@ export default function ProjectItem({ project }) {
   } = useChat();
 
   const isExpanded = expandedProjects.has(project.id);
-  const isActive = activeProjectId === project.id;
   const isLoading = loadingProjects.has(project.id);
   const sessions = projectSessions[project.id] || [];
+
+  const [showAllMap, setShowAllMap] = useState(() => readExpandedSet());
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...showAllMap]));
+    } catch {}
+  }, [showAllMap]);
+  const showAll = showAllMap.has(project.id);
+  const sorted = [...sessions].sort(
+    (a, b) => (b.last_modified || 0) - (a.last_modified || 0)
+  );
+  const visible = showAll ? sorted : sorted.slice(0, RECENT_LIMIT);
+  const hiddenCount = Math.max(0, sorted.length - RECENT_LIMIT);
 
   const handleHeaderClick = (e) => {
     if (e.target.closest('.delete-project-btn') || e.target.closest('.project-new-chat-btn')) return;
@@ -40,18 +64,12 @@ export default function ProjectItem({ project }) {
   };
 
   return (
-    <div
-      className={`project-card rounded-xl border transition-all ${
-        isActive
-          ? 'bg-dark-surface/70 border-dark-border/90 shadow-sm'
-          : 'bg-dark-surface/30 border-dark-border/40 hover:border-dark-border/80'
-      }`}
-    >
+    <div className="project-card rounded-lg">
       <div
         onClick={handleHeaderClick}
-        className="project-header group px-2.5 py-2 rounded-xl cursor-pointer flex items-center justify-between hover:bg-dark-elevated/40 transition-colors"
+        className="project-header group px-2 py-1.5 rounded-md cursor-pointer flex items-center justify-between hover:bg-white/[0.04] transition-colors"
       >
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <svg
             className={`project-chevron w-3 h-3 text-txt-subtle transition-transform duration-200 shrink-0 ${
               isExpanded ? 'rotate-90 text-brand' : ''
@@ -63,18 +81,14 @@ export default function ProjectItem({ project }) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
           </svg>
 
-          <svg className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-brand' : 'text-txt-muted'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-          </svg>
-
-          <span className={`text-xs truncate font-medium ${isActive ? 'text-white' : 'text-txt-muted group-hover:text-white'}`} title={project.path}>
+          <span className="text-xs truncate font-medium text-txt-muted group-hover:text-white" title={project.path}>
             {project.name}
           </span>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
-          {sessions.length > 0 && !isExpanded && (
-            <span className="text-[10px] font-mono text-txt-subtle bg-dark-bg/60 px-1.5 py-0.2 rounded-full border border-dark-border/40 group-hover:opacity-0 transition-opacity">
+        <div className="flex items-center gap-0.5 shrink-0">
+          {sessions.length > 0 && (
+            <span className="text-[9.5px] font-mono text-txt-subtle/70 bg-white/[0.04] px-1.5 py-0.5 rounded-full">
               {sessions.length}
             </span>
           )}
@@ -82,7 +96,7 @@ export default function ProjectItem({ project }) {
           <button
             type="button"
             onClick={handleNewChat}
-            className="project-new-chat-btn opacity-0 group-hover:opacity-100 p-1 hover:text-brand text-txt-subtle transition-all cursor-pointer rounded hover:bg-dark-elevated"
+            className="project-new-chat-btn opacity-0 group-hover:opacity-100 p-1 hover:text-brand text-txt-subtle transition-all cursor-pointer rounded hover:bg-white/[0.04]"
             title={`New conversation in ${project.name}`}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -92,7 +106,7 @@ export default function ProjectItem({ project }) {
           <button
             type="button"
             onClick={handleDelete}
-            className="delete-project-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 text-txt-subtle transition-all cursor-pointer rounded hover:bg-dark-elevated"
+            className="delete-project-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 text-txt-subtle transition-all cursor-pointer rounded hover:bg-white/[0.04]"
             title="Remove workspace from tracking"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -108,9 +122,9 @@ export default function ProjectItem({ project }) {
       </div>
 
       {isExpanded && (
-        <>
+        <div className="mt-0.5">
           {isLoading ? (
-            <div className="py-2.5 px-4 text-center text-[10px] text-txt-subtle font-mono flex items-center justify-center gap-1.5">
+            <div className="py-2 px-3 text-center text-[10px] text-txt-subtle font-mono flex items-center justify-center gap-1.5">
               <svg className="w-3 h-3 animate-spin text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path
@@ -119,10 +133,10 @@ export default function ProjectItem({ project }) {
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 />
               </svg>
-              <span>Loading conversations...</span>
+              <span>Loading conversations…</span>
             </div>
           ) : sessions.length === 0 ? (
-            <div className="py-2 px-4 text-[11px] text-txt-subtle flex items-center justify-between border-t border-dark-border/30 mt-1">
+            <div className="py-2 px-3 text-[11px] text-txt-subtle flex items-center justify-between mt-0.5">
               <span className="italic">No chats yet</span>
               <button
                 type="button"
@@ -133,13 +147,51 @@ export default function ProjectItem({ project }) {
               </button>
             </div>
           ) : (
-            <div className="pl-2 pr-1.5 py-1 space-y-1 border-l border-dark-border/60 ml-4 my-1">
-              {sessions.map((s) => (
-                <SessionItem key={s.thread_id} session={s} projectId={project.id} />
-              ))}
-            </div>
+            <>
+              {/* Tree connector: vertical line down the left, horizontal "branch" stubs. */}
+              <div className="relative pl-5 ml-3.5 mt-0.5 space-y-0.5 before:absolute before:left-0 before:top-0 before:bottom-3 before:w-px before:bg-dark-border/70">
+                {visible.map((s, idx) => (
+                  <div key={s.thread_id} className="relative">
+                    {/* Horizontal branch stub connecting the tree line to the row */}
+                    <span className="absolute -left-3.5 top-1/2 w-3 h-px bg-dark-border/70" aria-hidden="true" />
+                    {idx === visible.length - 1 && hiddenCount === 0 && (
+                      // Last row, nothing below: cap the vertical line at this row.
+                      <span className="absolute -left-[1px] top-0 bottom-1/2 w-px bg-dark-surface/40" aria-hidden="true" />
+                    )}
+                    <SessionItem session={s} projectId={project.id} />
+                  </div>
+                ))}
+              </div>
+              {hiddenCount > 0 && (
+                <div className="relative pl-5 ml-3.5">
+                  <span className="absolute -left-3.5 top-1/2 w-3 h-px bg-dark-border/70" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAllMap((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(project.id)) next.delete(project.id);
+                        else next.add(project.id);
+                        return next;
+                      });
+                    }}
+                    className="mt-1 text-[10.5px] text-txt-subtle hover:text-brand font-medium flex items-center gap-1 px-1.5 py-1 rounded-md hover:bg-white/[0.04] transition-colors cursor-pointer"
+                  >
+                    <svg
+                      className={`w-3 h-3 transition-transform ${showAll ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                    {showAll ? 'Show recent only' : `Show all (${hiddenCount} more)`}
+                  </button>
+                </div>
+              )}
+            </>
           )}
-        </>
+        </div>
       )}
     </div>
   );

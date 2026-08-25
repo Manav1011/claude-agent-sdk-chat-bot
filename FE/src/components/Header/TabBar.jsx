@@ -50,6 +50,8 @@ export default function TabBar() {
     };
   }, [contextMenu]);
 
+  // ponytail: tab bar is a desktop multi-window concept. On mobile, the active
+  // chat is the only chat; the workspace sheet handles switching. Hide entirely.
   if (!openTabs || openTabs.length === 0) {
     return null;
   }
@@ -74,10 +76,10 @@ export default function TabBar() {
   };
 
   return (
-    <div className="h-7.5 sm:h-8.5 bg-[#0b0c10] border-b border-dark-border/70 flex items-center px-1.5 sm:px-2 select-none shrink-0 overflow-hidden">
+    <div className="hidden lg:flex h-9 sm:h-10 bg-dark-surface/40 border-b border-dark-border/60 items-center px-2.5 sm:px-4 select-none shrink-0 overflow-hidden">
       <div
         ref={scrollRef}
-        className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1 h-full py-0.5 sm:py-1 min-w-0"
+        className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1 h-full min-w-0"
       >
         {openTabs.map((tab, idx) => {
           const isActive =

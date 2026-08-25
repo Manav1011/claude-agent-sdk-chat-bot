@@ -12,9 +12,19 @@ body,
   max-height: 100dvh;
   background-color: #0c0d10;
   color: #f3f4f6;
-  font-family: 'Inter', sans-serif;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
   overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
 }
+
+/* iOS safe-area for the chat input */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Hide scrollbar but allow scroll (for tab strip) */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* Ambient background glow */
 .bg-ambient {
@@ -44,74 +54,106 @@ body,
 
 /* Markdown styling inside assistant messages */
 .prose-dark {
-  color: #e5e7eb;
-  font-size: 0.925rem;
-  line-height: 1.6;
+  color: #e8eaed;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  letter-spacing: -0.003em;
   word-break: break-word;
   overflow-wrap: break-word;
   max-width: 100%;
 }
 .prose-dark p {
-  margin-bottom: 0.75rem;
+  margin-bottom: 1.05rem;
 }
 .prose-dark p:last-child {
   margin-bottom: 0;
 }
+/* ponytail: "lede" — the opening paragraph reads slightly larger and tighter
+   to set the voice. Newsrooms do this; the difference between prose and prose. */
+.prose-dark > p:first-child {
+  font-size: 1.025rem;
+  line-height: 1.55;
+  color: #f3f4f6;
+  font-weight: 450;
+  margin-bottom: 1.25rem;
+  letter-spacing: -0.005em;
+}
 .prose-dark h1, .prose-dark h2, .prose-dark h3, .prose-dark h4 {
   color: #ffffff;
   font-weight: 600;
-  margin-top: 1rem;
-  margin-bottom: 0.5rem;
+  margin-top: 1.25rem;
+  margin-bottom: 0.6rem;
   word-break: break-word;
+  letter-spacing: -0.01em;
 }
+.prose-dark h1 { font-size: 1.2rem; }
+.prose-dark h2 { font-size: 1.075rem; }
+.prose-dark h3 { font-size: 1rem; }
 .prose-dark ul {
   list-style-type: disc;
   padding-left: 1.25rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
 }
 .prose-dark ol {
   list-style-type: decimal;
   padding-left: 1.25rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
 }
 .prose-dark li {
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.4rem;
   word-break: break-word;
+  line-height: 1.65;
 }
 .prose-dark code:not(pre code) {
-  background: #2a2d37;
-  color: #f16913;
-  padding: 0.12rem 0.35rem;
+  background: #252932;
+  color: #ff7b25;
+  padding: 0.12rem 0.4rem;
   border-radius: 0.35rem;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.85em;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.86em;
   word-break: normal;
   overflow-wrap: break-word;
   display: inline-block;
   vertical-align: baseline;
   max-width: 100%;
+  border: 1px solid rgba(241, 105, 19, 0.12);
 }
 .prose-dark pre {
-  background: #14151a !important;
+  background: #0c0d10 !important;
   border: 1px solid #2a2d37;
-  border-radius: 0.5rem;
-  margin: 0.75rem 0;
+  border-radius: 0.6rem;
+  margin: 1.1rem 0;
   position: relative;
   overflow-x: auto;
   max-width: 100%;
 }
 .prose-dark pre code {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'IBM Plex Mono', monospace;
   font-size: 0.825rem;
   padding: 1rem !important;
   display: block;
   overflow-x: auto;
   white-space: pre;
+  color: #e8eaed;
+}
+.prose-dark strong {
+  color: #ffffff;
+  font-weight: 600;
+}
+.prose-dark em {
+  color: #f3f4f6;
+}
+.prose-dark blockquote {
+  border-left: 2px solid rgba(241, 105, 19, 0.5);
+  padding-left: 0.9rem;
+  margin: 1rem 0;
+  color: #c4c8d0;
+  font-style: italic;
 }
 .prose-dark table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0.75rem 0;
+  margin: 1rem 0;
   font-size: 0.85rem;
   display: block;
   overflow-x: auto;
@@ -158,3 +200,22 @@ body,
 }
 .pulse-dot:nth-child(1) { animation-delay: -0.32s; }
 .pulse-dot:nth-child(2) { animation-delay: -0.16s; }
+
+/* Workspace Stripe — REMOVED. Earlier mobile signature; not requested by the user. */
+
+/* Mobile drag handle on the bottom sheet */
+.sheet-handle {
+  width: 36px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+}
+
+/* Subtle slide-up for the mobile sheet */
+@keyframes sheetUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.animate-sheet-up {
+  animation: sheetUp 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}

@@ -28,13 +28,29 @@ export default {
         }
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        // ponytail: IBM Plex instead of Inter/JetBrains — one family pair, technical DNA,
+        // distinctive g/a and slash-0. Don't swap without a reason.
+        sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
       },
       boxShadow: {
         'glow': '0 0 20px rgba(241, 105, 19, 0.15)',
         'card-glow': '0 4px 20px -2px rgba(0, 0, 0, 0.5)',
-      }
+      },
+      animation: {
+        'sheet-up': 'sheetUp 320ms cubic-bezier(0.32, 0.72, 0, 1)',
+        'fade-in': 'fadeIn 200ms ease-out',
+      },
+      keyframes: {
+        sheetUp: {
+          from: { transform: 'translateY(100%)' },
+          to: { transform: 'translateY(0)' },
+        },
+        fadeIn: {
+          from: { opacity: '0' },
+          to: { opacity: '1' },
+        },
+      },
     },
   },
   plugins: [],

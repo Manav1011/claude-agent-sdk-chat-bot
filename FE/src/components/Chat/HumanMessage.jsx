@@ -6,9 +6,9 @@ function HumanMessage({ content, images, onPreviewImage }) {
   const toSrc = (img) => (typeof img === 'string' ? img : `data:${img.media_type};base64,${img.data}`);
 
   return (
-    <div className="animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0">
+    <div className="animate-msg w-full max-w-[65ch] sm:max-w-2xl lg:max-w-4xl mx-auto min-w-0">
       <div className="flex justify-end mb-2.5 min-w-0 max-w-full">
-        <div className="bg-dark-elevated/90 text-txt-main text-xs sm:text-sm rounded-xl px-3 py-2 max-w-[85%] sm:max-w-[75%] w-fit break-words space-y-2">
+        <div className="bg-dark-elevated/90 text-txt-main text-sm sm:text-sm rounded-xl px-3 py-2 max-w-[88%] sm:max-w-[75%] w-fit break-words space-y-2">
           {hasImages && (
             <div className={`grid gap-1.5 ${images.length === 1 ? 'grid-cols-1' : images.length === 2 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3'}`}>
               {images.map((img, idx) => (
@@ -32,7 +32,7 @@ function HumanMessage({ content, images, onPreviewImage }) {
               ))}
             </div>
           )}
-          {Boolean(content) && <div className="whitespace-pre-wrap leading-relaxed">{content}</div>}
+          {Boolean(content) && <div className="whitespace-pre-wrap leading-relaxed text-[14px] tracking-[-0.003em]">{content}</div>}
         </div>
       </div>
     </div>

@@ -144,7 +144,7 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none bg-gradient-to-t from-dark-bg via-dark-bg/95 to-transparent pt-6 pb-[max(0.65rem,env(safe-area-inset-bottom))] px-2.5 sm:pb-3.5 sm:px-4">
+    <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none bg-gradient-to-t from-dark-bg via-dark-bg/95 to-transparent pt-6 pb-[max(0.65rem,env(safe-area-inset-bottom))] px-3 sm:pb-3.5 sm:px-4">
       <div className="w-full max-w-2xl lg:max-w-3xl mx-auto min-w-0">
         {/* Smart Capsule Card */}
         <div
@@ -259,7 +259,7 @@ export default function ChatInput() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 title="Attach images (or paste from clipboard)"
-                className="h-7 w-7 rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border text-txt-muted hover:text-white transition-colors flex items-center justify-center cursor-pointer shrink-0"
+                className="h-8 w-8 rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border text-txt-muted hover:text-white transition-colors flex items-center justify-center cursor-pointer shrink-0"
               >
                 <svg className="w-3.5 h-3.5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
@@ -275,7 +275,7 @@ export default function ChatInput() {
                 type="button"
                 onClick={() => stopStream()}
                 title="Stop generation"
-                className="bg-rose-500 hover:bg-rose-600 text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 shadow-glow active:scale-95 shrink-0 cursor-pointer"
+                className="bg-rose-500 hover:bg-rose-600 text-white h-8 w-8 sm:h-8 sm:w-8 rounded-lg flex items-center justify-center transition-all duration-150 shadow-glow active:scale-95 shrink-0 cursor-pointer"
               >
                 <svg className="w-3 h-3 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
                   <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -287,7 +287,7 @@ export default function ChatInput() {
                 onClick={handleSend}
                 disabled={!canSend}
                 title="Send message"
-                className="bg-brand hover:bg-brand-hover text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-25 disabled:hover:bg-brand shadow-sm active:scale-95 shrink-0 cursor-pointer"
+                className="bg-brand hover:bg-brand-hover text-white h-8 w-8 sm:h-8 sm:w-8 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-25 disabled:hover:bg-brand shadow-sm active:scale-95 shrink-0 cursor-pointer"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />

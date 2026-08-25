@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChatProvider } from './context/ChatContext';
+import { ChatProvider, useChat } from './context/ChatContext';
 import Sidebar from './components/Sidebar/Sidebar';
 import Header from './components/Header/Header';
 import TabBar from './components/Header/TabBar';
