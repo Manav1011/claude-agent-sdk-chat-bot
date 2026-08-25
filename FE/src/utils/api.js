@@ -171,3 +171,77 @@ export async function* streamChatApi({
     reader.releaseLock();
   }
 }
+
+// --- Streaming-input mode helpers (long-lived SSE session) ---
+
+export async function sendSessionMessage({ threadId, workspace, content, images = null, signal }) {
+  const res = await fetch(`/api/sessions/${threadId}/messages?workspace=${encodeURIComponent(workspace)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, images }),
+    signal,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to send session message (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function interruptSession({ threadId, workspace }) {
+  const res = await fetch(`/api/sessions/${threadId}/interrupt?workspace=${encodeURIComponent(workspace)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to interrupt session (${res.status})`);
+  }
+  return res.json();
+}
+
+// Creates a long-lived EventSource that yields {event, data} dicts as
+// parsed SSE messages from the backend SessionLoop. Caller must call .close()
+// on the returned EventSource to unsubscribe.
+export function createSessionEventSource({ threadId, workspace }) {
+  const url = `/api/sessions/${threadId}/events?workspace=${encodeURIComponent(workspace)}`;
+  const es = new EventSource(url);
+
+  const subscribers = new Set();
+  const emit = (parsed) => subscribers.forEach((cb) => { try { cb(parsed); } catch (_) {} });
+
+  const onMessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      emit({ event: 'message', data });
+    } catch (e) {
+      console.error('Failed to parse session event data', e);
+    }
+  };
+  const onHeartbeat = (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      emit({ event: 'heartbeat', data });
+    } catch (_) {}
+  };
+  const onError = () => emit({ event: 'error', data: { message: 'EventSource error' } });
+
+  es.addEventListener('message', onMessage);
+  es.addEventListener('heartbeat', onHeartbeat);
+  es.onerror = onError;
+
+  return {
+    es,
+    subscribe(cb) {
+      subscribers.add(cb);
+      return () => subscribers.delete(cb);
+    },
+    close() {
+      es.removeEventListener('message', onMessage);
+      es.removeEventListener('heartbeat', onHeartbeat);
+      es.onerror = null;
+      subscribers.clear();
+      es.close();
+    },
+  };
+}

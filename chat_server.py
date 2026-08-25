@@ -14,12 +14,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Any
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk import ResultMessage, StreamEvent, list_sessions as sdk_list_sessions
@@ -53,9 +53,9 @@ _INDUSTRIAL_HTML = _INDUSTRIAL_HTML_PATH.read_text() if _INDUSTRIAL_HTML_PATH.ex
 _DEFAULT_WORKSPACE = "."
 
 # ============== Permission registry ==============
-# Maps request_id -> asyncio.Future that frontend resolves via POST /api/permissions/decision
-_permission_futures: dict[str, asyncio.Future] = {}
-_permission_meta: dict[str, dict] = {}
+# Maps (session_id, request_id) -> asyncio.Future that frontend resolves via POST /api/permissions/decision
+_permission_futures: dict[tuple[str, str], asyncio.Future] = {}
+_permission_meta: dict[tuple[str, str], dict] = {}
 
 # ============== SQLite (projects DB) ==============
 import sqlite3
@@ -133,6 +133,13 @@ async def lifespan(app: FastAPI):
     yield
     global _WORKSPACE_CLIENTS
     _WORKSPACE_CLIENTS.clear()
+    # Shutdown all active SessionLoops so their SDK clients disconnect cleanly.
+    for loop in list(_SESSION_REGISTRY.values()):
+        try:
+            await loop.shutdown()
+        except Exception:
+            pass
+    _SESSION_REGISTRY.clear()
     _tts_executor.shutdown(wait=False)
 
 
@@ -149,9 +156,363 @@ app.add_middleware(
 if (_FE_DIST_PATH / "assets").exists():
     app.mount("/assets", StaticFiles(directory=_FE_DIST_PATH / "assets"), name="assets")
 
-# Per-workspace SDK client cache (for context_usage queries between requests)
+# Per-workspace SDK client cache (legacy /api/chat; new SessionLoop owns the long-lived clients)
 _WORKSPACE_CLIENTS: dict[str, ClaudeSDKClient] = {}
 _cache_lock = asyncio.Lock()
+_session_locks: dict[str, asyncio.Lock] = {}
+
+# Per-session background-task registry for true streaming-input mode
+_SESSION_REGISTRY: dict[str, "SessionLoop"] = {}
+_registry_lock = asyncio.Lock()
+_SESSION_IDLE_TIMEOUT = 30 * 60  # seconds; ponytail: simple global, configurable later
+
+
+class _UserMessage(BaseModel):
+    content: str
+    images: list[dict] | None = None  # Phase 6: [{data, media_type}] base64
+
+
+class SessionLoop:
+    """Owns one ClaudeSDKClient, one incoming queue, N subscriber queues."""
+
+    def __init__(self, workspace: str, session_id: str):
+        self.workspace = workspace
+        self.session_id = session_id
+        self._client: ClaudeSDKClient | None = None
+        self._incoming: asyncio.Queue[_UserMessage] = asyncio.Queue()
+        self._subscribers: set[asyncio.Queue] = set()
+        self._running = False
+        self._task: asyncio.Task | None = None
+        self._last_activity = asyncio.get_event_loop().time()
+        # Per-loop translator state — translates SDK StreamEvent/ResultMessage into the same
+        # legacy event shape (/api/chat emits). Mirrors the legacy response_reader logic.
+        self._pending_tools: dict[int, dict] = {}
+        self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    def _touch(self):
+        self._last_activity = asyncio.get_event_loop().time()
+
+    async def start(self):
+        self._running = True
+        self._task = asyncio.create_task(self._loop_body())
+        asyncio.create_task(self._idle_watcher())
+
+    async def enqueue(self, msg: _UserMessage):
+        self._touch()
+        await self._incoming.put(msg)
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=1024)
+        self._subscribers.add(q)
+        self._touch()
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue):
+        self._subscribers.discard(q)
+        self._touch()
+
+    async def interrupt(self):
+        if self._client is not None:
+            try:
+                await self._client.interrupt()
+            except Exception as e:
+                print(f"[WARN] interrupt failed: {e}")
+
+    async def shutdown(self):
+        self._running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+        if self._client is not None:
+            try:
+                await self._client.disconnect()
+            except Exception:
+                pass
+            self._client = None
+
+    async def _broadcast(self, event):
+        # Accept either a dict (already in FE event shape) or an SDK Message object.
+        from fastapi.encoders import jsonable_encoder
+        if not isinstance(event, dict):
+            try:
+                event = jsonable_encoder(event)
+            except Exception:
+                event = {"type": "_sdk_raw", "message": str(event)}
+        for sub in list(self._subscribers):
+            try:
+                sub.put_nowait(event)
+            except asyncio.QueueFull:
+                pass  # ponytail: drop slow subscriber
+        self._touch()
+
+    def _make_generator(self, msg: _UserMessage):
+        async def gen():
+            content: Any = msg.content
+            if msg.images:
+                blocks: list[dict] = [{"type": "text", "text": msg.content}]
+                for img in msg.images:
+                    blocks.append({"type": "image", "source": {"type": "base64", "media_type": img["media_type"], "data": img["data"]}})
+                content = blocks
+            # SDK requires {type, message:{role,content}, parent_tool_use_id} structure
+            yield {"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}
+        return gen()
+
+    def _make_can_use_tool(self):
+        loop_ref = self
+
+        async def can_use_tool(tool_name: str, tool_input: dict, context: ToolPermissionContext):
+            request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex[:8]}"
+            fut: asyncio.Future = asyncio.Future()
+            _permission_futures[(self.session_id, request_id)] = fut
+            _permission_meta[(self.session_id, request_id)] = {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "session_id": self.session_id,
+                "request_id": request_id,
+            }
+            await loop_ref._broadcast({
+                "type": "permission_request",
+                "request_id": request_id,
+                "session_id": self.session_id,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "tool_use_id": context.tool_use_id,
+                "title": context.title,
+                "description": context.description,
+                "suggestions": [s.to_dict() for s in (context.suggestions or [])],
+            })
+            try:
+                result = await asyncio.wait_for(fut, timeout=300)
+            except asyncio.TimeoutError:
+                result = {"decision": "deny", "message": "Permission request timed out"}
+            finally:
+                _permission_futures.pop((self.session_id, request_id), None)
+                _permission_meta.pop((self.session_id, request_id), None)
+            await loop_ref._broadcast({
+                "type": "permission_resolved",
+                "request_id": request_id,
+                "session_id": self.session_id,
+                "decision": result["decision"],
+            })
+            decision = result["decision"]
+            if decision == "allow":
+                if tool_name == "AskUserQuestion" and result.get("answers") is not None:
+                    return PermissionResultAllow(updated_input={
+                        "questions": tool_input.get("questions", []),
+                        "answers": result["answers"],
+                    })
+                updated = result.get("updated_input")
+                if tool_name in {"Edit", "Bash", "Write", "NotebookEdit"} and updated is None:
+                    print(f"[WARN] {tool_name} approved without updated_input; FE may have discarded edits")
+                # ponytail: SDK accepts dict | None; force None to dict when user passed nothing useful
+                final_input: dict | None = updated if isinstance(updated, dict) else tool_input
+                return PermissionResultAllow(updated_input=final_input)
+            return PermissionResultDeny(message=result.get("message", "User denied"))
+
+        return can_use_tool
+
+    async def _build_client(self) -> ClaudeSDKClient:
+        opts = _build_options(
+            workspace=self.workspace,
+            session_id=self.session_id,
+            resume=False,
+        )
+        opts.can_use_tool = self._make_can_use_tool()
+        client = ClaudeSDKClient(options=opts)
+        await client.connect()
+        return client
+
+    async def _loop_body(self):
+        # Track JSONL growth for this session so we can extract tool results after each turn.
+        project_key = _sdk_project_key(self.workspace)
+        jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{self.session_id}.jsonl"
+
+        while self._running:
+            msg = await self._incoming.get()
+            # Reset per-turn state so each enqueued user message starts fresh.
+            self._pending_tools = {}
+            self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            jsonl_size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
+            try:
+                if self._client is None:
+                    self._client = await self._build_client()
+                await self._client.query(self._make_generator(msg))
+                async for sdk_event in self._client.receive_response():
+                    for legacy in self._translate_sdk_message(sdk_event, jsonl_path, jsonl_size_before):
+                        await self._broadcast(legacy)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[ERROR] SessionLoop {self.session_id}: {e}")
+                await self._broadcast({"type": "error", "message": str(e), "session_id": self.session_id})
+                if self._client is not None:
+                    try:
+                        await self._client.disconnect()
+                    except Exception:
+                        pass
+                    self._client = None
+
+    def _translate_sdk_message(self, sdk_event, jsonl_path, jsonl_size_before):
+        """Mirror legacy /api/chat response_reader: turn SDK events into the legacy event dicts
+        the frontend already understands (text_delta, thinking_delta, tool_result, done, ...).
+        Yields zero or more legacy event dicts."""
+        # StreamEvent with delta payloads.
+        if isinstance(sdk_event, StreamEvent):
+            evt = sdk_event.event
+            evt_type = evt.get("type")
+            if evt_type == "content_block_delta":
+                delta = evt.get("delta", {})
+                d_type = delta.get("type")
+                if d_type == "text_delta":
+                    yield {"type": "text_delta", "content": delta.get("text", "")}
+                    return
+                if d_type == "thinking_delta":
+                    yield {"type": "thinking_delta", "content": delta.get("thinking", "")}
+                    return
+                if d_type == "input_json_delta":
+                    idx = evt.get("index")
+                    partial = delta.get("partial_json", "")
+                    if idx in self._pending_tools:
+                        self._pending_tools[idx]["args_str"] += partial
+                    return
+                return
+            if evt_type == "content_block_start":
+                cb = evt.get("content_block", {})
+                if cb.get("type") == "tool_use":
+                    idx = evt.get("index")
+                    if idx is not None:
+                        self._pending_tools[idx] = {
+                            "name": cb.get("name"),
+                            "id": cb.get("id"),
+                            "args_str": "",
+                        }
+                return
+            if evt_type == "message_delta":
+                usage = evt.get("usage", {})
+                if usage:
+                    self._turn_usage["input_tokens"] += usage.get("prompt_tokens", 0)
+                    self._turn_usage["output_tokens"] += usage.get("completion_tokens", 0)
+                    self._turn_usage["total_tokens"] = (
+                        self._turn_usage["input_tokens"] + self._turn_usage["output_tokens"]
+                    )
+                return
+            if evt_type in ("content_block_stop", "message_start"):
+                return
+            if evt_type == "message_stop":
+                # One tool_result per pending tool. Result content comes from JSONL tail afterwards.
+                for idx, tool_data in self._pending_tools.items():
+                    args_str = tool_data.get("args_str", "")
+                    try:
+                        args_json = json.loads(args_str) if args_str else {}
+                    except json.JSONDecodeError:
+                        args_json = {}
+                    yield {
+                        "type": "tool_result",
+                        "tool_name": tool_data["name"],
+                        "tool_id": tool_data["id"],
+                        "args": args_json,
+                    }
+                self._pending_tools = {}
+                return
+            return
+
+        # ResultMessage — final per-turn result.
+        if isinstance(sdk_event, ResultMessage):
+            try:
+                if sdk_event.model_usage and self._turn_usage["total_tokens"] == 0:
+                    for model, u in sdk_event.model_usage.items():
+                        self._turn_usage["input_tokens"] += u.get("inputTokens", 0)
+                        self._turn_usage["output_tokens"] += u.get("outputTokens", 0)
+                    self._turn_usage["total_tokens"] = (
+                        self._turn_usage["input_tokens"] + self._turn_usage["output_tokens"]
+                    )
+                elif sdk_event.usage and self._turn_usage["total_tokens"] == 0:
+                    self._turn_usage["input_tokens"] = sdk_event.usage.get("input_tokens", 0)
+                    self._turn_usage["output_tokens"] = sdk_event.usage.get("output_tokens", 0)
+                    self._turn_usage["total_tokens"] = sdk_event.usage.get("total_tokens", 0)
+            except Exception:
+                pass
+
+            # Schedule JSONL tail after we return so the broadcast queue isn't blocked.
+            asyncio.create_task(self._tail_jsonl_for_tool_results(jsonl_path, jsonl_size_before))
+
+            yield {
+                "type": "done",
+                "thread_id": self.session_id,
+                "usage": self._turn_usage if self._turn_usage["total_tokens"] > 0 else None,
+            }
+            return
+
+    async def _tail_jsonl_for_tool_results(self, jsonl_path, jsonl_size_before):
+        """Tail the JSONL session file for tool_result blocks emitted since last 'done'.
+        Each result gets broadcast as a tool_result_content event for the matching tool_id."""
+        try:
+            if not jsonl_path.exists():
+                return
+            with open(jsonl_path, "rb") as f:
+                f.seek(jsonl_size_before)
+                new_bytes = f.read()
+            if not new_bytes.strip():
+                return
+            for line in new_bytes.split(b"\n"):
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line.decode("utf-8", errors="replace"))
+                except Exception:
+                    continue
+                if entry.get("type") != "user":
+                    continue
+                msg_content = entry.get("message", {}).get("content", [])
+                if not isinstance(msg_content, list):
+                    continue
+                for block in msg_content:
+                    if block.get("type") != "tool_result":
+                        continue
+                    tool_result = block.get("content", "")
+                    text_parts = []
+                    if isinstance(tool_result, list):
+                        for item in tool_result:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                    content = "".join(text_parts) if text_parts else str(tool_result)
+                    source_uuid = entry.get("sourceToolAssistantUUID", "")
+                    if content:
+                        await self._broadcast({
+                            "type": "tool_result_content",
+                            "tool_id": source_uuid,
+                            "content": content,
+                        })
+        except Exception as e:
+            print(f"[WARN] JSONL tail failed: {e}")
+
+    async def _idle_watcher(self):
+        while self._running:
+            await asyncio.sleep(60)
+            now = asyncio.get_event_loop().time()
+            if now - self._last_activity > _SESSION_IDLE_TIMEOUT and not self._subscribers and self._incoming.qsize() == 0:
+                await self.shutdown()
+                async with _registry_lock:
+                    _SESSION_REGISTRY.pop(self.session_id, None)
+                return
+
+
+async def get_or_create_loop(workspace: str, session_id: str) -> SessionLoop:
+    async with _registry_lock:
+        loop = _SESSION_REGISTRY.get(session_id)
+        if loop is None:
+            loop = SessionLoop(workspace=workspace, session_id=session_id)
+            _SESSION_REGISTRY[session_id] = loop
+            await loop.start()
+        return loop
+
+
+async def _session_lock(sid: str) -> asyncio.Lock:
+    async with _cache_lock:
+        lk = _session_locks.get(sid)
+        if lk is None:
+            lk = asyncio.Lock()
+            _session_locks[sid] = lk
+        return lk
 
 
 # ============== SDK Helpers ==============
@@ -756,6 +1117,7 @@ async def tts_endpoint(q: str):
 class PermissionDecisionRequest(BaseModel):
     request_id: str
     decision: Literal["allow", "deny"]
+    session_id: str | None = None
     updated_input: dict | None = None
     answers: dict | None = None
     message: str | None = None
@@ -764,7 +1126,18 @@ class PermissionDecisionRequest(BaseModel):
 @app.post("/api/permissions/decision")
 async def permission_decision(req: PermissionDecisionRequest):
     """Resolve a pending permission request (from can_use_tool callback)."""
-    future = _permission_futures.pop(req.request_id, None)
+    # ponytail: key is (session_id, request_id). If session_id omitted (old FE), scan for a match.
+    key = None
+    if req.session_id:
+        key = (req.session_id, req.request_id)
+        future = _permission_futures.pop(key, None)
+    else:
+        future = None
+        for k, fut in list(_permission_futures.items()):
+            if k[1] == req.request_id and not fut.done():
+                future = _permission_futures.pop(k)
+                key = k
+                break
     if future is None:
         raise HTTPException(status_code=404, detail="Permission request not found or already resolved")
     if future.done():
@@ -783,11 +1156,13 @@ async def permission_pending(thread_id: str | None = None):
     """List pending permission requests for a given thread (session_id).
     If thread_id is None, returns all pending requests (for backwards compatibility).
     """
-    requests = [
-        {**meta, "request_id": rid}
-        for rid, meta in _permission_meta.items()
-        if rid in _permission_futures and not _permission_futures[rid].done()
-    ]
+    requests = []
+    for key, meta in _permission_meta.items():
+        if key not in _permission_futures or _permission_futures[key].done():
+            continue
+        sid, rid = key
+        item = {**meta, "request_id": rid, "session_id": sid}
+        requests.append(item)
     if thread_id is not None:
         requests = [r for r in requests if r.get("session_id") == thread_id]
     return {"requests": requests}
@@ -835,7 +1210,7 @@ async def chat(request: ChatRequest):
         ) -> PermissionResultAllow | PermissionResultDeny:
             request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex[:8]}"
             future: asyncio.Future = asyncio.Future()
-            _permission_futures[request_id] = future
+            _permission_futures[(session_id, request_id)] = future
             meta = {
                 "tool_name": tool_name,
                 "tool_input": tool_input,
@@ -845,7 +1220,7 @@ async def chat(request: ChatRequest):
                 "suggestions": [s.to_dict() for s in (context.suggestions or [])],
                 "session_id": session_id,
             }
-            _permission_meta[request_id] = meta
+            _permission_meta[(session_id, request_id)] = meta
             # Put SSE event directly into queue so the generator yields it immediately
             sse_queue.put_nowait(("message", {
                 "type": "permission_request",
@@ -858,8 +1233,8 @@ async def chat(request: ChatRequest):
             except asyncio.TimeoutError:
                 result = {"decision": "deny", "message": "Permission request timed out"}
             finally:
-                _permission_futures.pop(request_id, None)
-                _permission_meta.pop(request_id, None)
+                _permission_futures.pop((session_id, request_id), None)
+                _permission_meta.pop((session_id, request_id), None)
             decision = result["decision"]
             if decision == "allow":
                 # AskUserQuestion: answers IS the tool result — must be returned as updated_input
@@ -871,7 +1246,10 @@ async def chat(request: ChatRequest):
                         "answers": answers,
                     })
                 updated = result.get("updated_input")
-                return PermissionResultAllow(updated_input=updated if updated is not None else tool_input)
+                if tool_name in {"Edit", "Bash", "Write", "NotebookEdit"} and updated is None:
+                    print(f"[WARN] {tool_name} approved without updated_input; FE may have discarded edits")
+                final_input: dict | None = updated if isinstance(updated, dict) else tool_input
+                return PermissionResultAllow(updated_input=final_input)
             return PermissionResultDeny(message=result.get("message", "User denied"))
 
         speech_mode = request.speech_explanation
@@ -899,178 +1277,184 @@ async def chat(request: ChatRequest):
         jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
         jsonl_size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
 
+        # Capture client + cache_key so the outer finally can disconnect/evict.
+        state: dict[str, Any] = {"client": None, "cache_key": f"{workspace}:{session_id}"}
+
         async def response_reader():
+            nonlocal state
             pending_tools: dict[int, dict] = {}
             turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             try:
-                # Reuse cached client only when no custom config is passed — custom opts
-                # (skills, setting_sources, permission_mode) must be fresh per request
-                has_custom_config = any([
-                    request.setting_sources is not None,
-                    request.skills is not None,
-                    request.permission_mode is not None,
-                ])
-                cache_key = f"{workspace}:{session_id}"
-                async with _cache_lock:
-                    if cache_key in _WORKSPACE_CLIENTS and not has_custom_config:
-                        client = _WORKSPACE_CLIENTS[cache_key]
-                    else:
-                        client = ClaudeSDKClient(options=opts)
-                        await client.connect()
-                        if not has_custom_config:
-                            _WORKSPACE_CLIENTS[cache_key] = client
+                # Per-session lock so concurrent requests for same session_id serialize
+                session_lk = await _session_lock(session_id)
+                async with session_lk:
+                    has_custom_config = any([
+                        request.setting_sources is not None,
+                        request.skills is not None,
+                        request.permission_mode is not None,
+                    ])
+                    cache_key = state["cache_key"]
+                    async with _cache_lock:
+                        if cache_key in _WORKSPACE_CLIENTS and not has_custom_config:
+                            client = _WORKSPACE_CLIENTS[cache_key]
+                        else:
+                            client = ClaudeSDKClient(options=opts)
+                            await client.connect()
+                            if not has_custom_config:
+                                _WORKSPACE_CLIENTS[cache_key] = client
+                    state["client"] = client
 
-                # Build prompt with image context if any were uploaded
-                prompt = request.message
-                if request.image_paths:
-                    image_context = "\n".join(
-                        f"- image_{i+1}: {p}" for i, p in enumerate(request.image_paths)
-                    )
-                    prompt = f"Attached images:\n{image_context}\n\n{request.message}"
+                    # Build prompt with image context if any were uploaded
+                    prompt = request.message
+                    if request.image_paths:
+                        image_context = "\n".join(
+                            f"- image_{i+1}: {p}" for i, p in enumerate(request.image_paths)
+                        )
+                        prompt = f"Attached images:\n{image_context}\n\n{request.message}"
 
-                await client.query(prompt=prompt)
+                    await client.query(prompt=prompt)
 
-                async for msg in client.receive_response():
-                    # --- StreamEvent ---
-                    if isinstance(msg, StreamEvent):
-                        evt = msg.event
-                        evt_type = evt.get("type")
+                    async for msg in client.receive_response():
+                        # --- StreamEvent ---
+                        if isinstance(msg, StreamEvent):
+                            evt = msg.event
+                            evt_type = evt.get("type")
 
-                        if evt_type == "content_block_delta":
-                            delta = evt.get("delta", {})
-                            d_type = delta.get("type")
+                            if evt_type == "content_block_delta":
+                                delta = evt.get("delta", {})
+                                d_type = delta.get("type")
 
-                            if d_type == "text_delta":
-                                sse_queue.put_nowait(("message", {
-                                    "type": "text_delta",
-                                    "content": delta.get("text", ""),
-                                }))
+                                if d_type == "text_delta":
+                                    sse_queue.put_nowait(("message", {
+                                        "type": "text_delta",
+                                        "content": delta.get("text", ""),
+                                    }))
 
-                            elif d_type == "thinking_delta":
-                                sse_queue.put_nowait(("message", {
-                                    "type": "thinking_delta",
-                                    "content": delta.get("thinking", ""),
-                                }))
+                                elif d_type == "thinking_delta":
+                                    sse_queue.put_nowait(("message", {
+                                        "type": "thinking_delta",
+                                        "content": delta.get("thinking", ""),
+                                    }))
 
-                            elif d_type == "input_json_delta":
-                                idx = evt.get("index")
-                                partial = delta.get("partial_json", "")
-                                if idx in pending_tools:
-                                    pending_tools[idx]["args_str"] += partial
+                                elif d_type == "input_json_delta":
+                                    idx = evt.get("index")
+                                    partial = delta.get("partial_json", "")
+                                    if idx in pending_tools:
+                                        pending_tools[idx]["args_str"] += partial
 
-                        elif evt_type == "content_block_start":
-                            cb = evt.get("content_block", {})
-                            if cb.get("type") == "tool_use":
-                                idx: int | None = evt.get("index")
-                                if idx is not None:
-                                    pending_tools[idx] = {
-                                        "name": cb.get("name"),
-                                        "id": cb.get("id"),
-                                        "args_str": "",
-                                    }
+                            elif evt_type == "content_block_start":
+                                cb = evt.get("content_block", {})
+                                if cb.get("type") == "tool_use":
+                                    idx: int | None = evt.get("index")
+                                    if idx is not None:
+                                        pending_tools[idx] = {
+                                            "name": cb.get("name"),
+                                            "id": cb.get("id"),
+                                            "args_str": "",
+                                        }
 
-                        elif evt_type == "message_delta":
-                            usage = evt.get("usage", {})
-                            if usage:
-                                turn_usage["input_tokens"] += usage.get("prompt_tokens", 0)
-                                turn_usage["output_tokens"] += usage.get("completion_tokens", 0)
+                            elif evt_type == "message_delta":
+                                usage = evt.get("usage", {})
+                                if usage:
+                                    turn_usage["input_tokens"] += usage.get("prompt_tokens", 0)
+                                    turn_usage["output_tokens"] += usage.get("completion_tokens", 0)
+                                    turn_usage["total_tokens"] = (
+                                        turn_usage["input_tokens"] + turn_usage["output_tokens"]
+                                    )
+
+                            elif evt_type == "content_block_stop":
+                                pass
+
+                            elif evt_type == "message_stop":
+                                for idx, tool_data in pending_tools.items():
+                                    args_str = tool_data.get("args_str", "")
+                                    try:
+                                        args_json = json.loads(args_str) if args_str else {}
+                                    except json.JSONDecodeError:
+                                        args_json = {}
+                                    sse_queue.put_nowait(("message", {
+                                        "type": "tool_result",
+                                        "tool_name": tool_data["name"],
+                                        "tool_id": tool_data["id"],
+                                        "args": args_json,
+                                    }))
+                                pending_tools.clear()
+
+                        # --- ResultMessage ---
+                        elif isinstance(msg, ResultMessage):
+                            if msg.model_usage and turn_usage["total_tokens"] == 0:
+                                for model, u in msg.model_usage.items():
+                                    turn_usage["input_tokens"] += u.get("inputTokens", 0)
+                                    turn_usage["output_tokens"] += u.get("outputTokens", 0)
                                 turn_usage["total_tokens"] = (
                                     turn_usage["input_tokens"] + turn_usage["output_tokens"]
                                 )
+                            elif msg.usage and turn_usage["total_tokens"] == 0:
+                                turn_usage["input_tokens"] = msg.usage.get("input_tokens", 0)
+                                turn_usage["output_tokens"] = msg.usage.get("output_tokens", 0)
+                                turn_usage["total_tokens"] = msg.usage.get("total_tokens", 0)
 
-                        elif evt_type == "content_block_stop":
-                            pass
+                            if speech_mode and msg.structured_output:
+                                explanation = msg.structured_output.get("explanation", "")
+                                if explanation:
+                                    sse_queue.put_nowait(("message", {
+                                        "type": "speech_explanation",
+                                        "content": explanation,
+                                    }))
 
-                        elif evt_type == "message_stop":
-                            for idx, tool_data in pending_tools.items():
-                                args_str = tool_data.get("args_str", "")
-                                try:
-                                    args_json = json.loads(args_str) if args_str else {}
-                                except json.JSONDecodeError:
-                                    args_json = {}
-                                sse_queue.put_nowait(("message", {
-                                    "type": "tool_result",
-                                    "tool_name": tool_data["name"],
-                                    "tool_id": tool_data["id"],
-                                    "args": args_json,
-                                }))
-                            pending_tools.clear()
+                            try:
+                                ctx = await client.get_context_usage()
+                                if ctx:
+                                    sse_queue.put_nowait(("message", {
+                                        "type": "context_usage",
+                                        "data": ctx,
+                                    }))
+                            except Exception as e:
+                                print(f"[WARN] get_context_usage failed: {e}")
 
-                    # --- ResultMessage ---
-                    elif isinstance(msg, ResultMessage):
-                        if msg.model_usage and turn_usage["total_tokens"] == 0:
-                            for model, u in msg.model_usage.items():
-                                turn_usage["input_tokens"] += u.get("inputTokens", 0)
-                                turn_usage["output_tokens"] += u.get("outputTokens", 0)
-                            turn_usage["total_tokens"] = (
-                                turn_usage["input_tokens"] + turn_usage["output_tokens"]
-                            )
-                        elif msg.usage and turn_usage["total_tokens"] == 0:
-                            turn_usage["input_tokens"] = msg.usage.get("input_tokens", 0)
-                            turn_usage["output_tokens"] = msg.usage.get("output_tokens", 0)
-                            turn_usage["total_tokens"] = msg.usage.get("total_tokens", 0)
-
-                        if speech_mode and msg.structured_output:
-                            explanation = msg.structured_output.get("explanation", "")
-                            if explanation:
-                                sse_queue.put_nowait(("message", {
-                                    "type": "speech_explanation",
-                                    "content": explanation,
-                                }))
-
-                        try:
-                            ctx = await client.get_context_usage()
-                            if ctx:
-                                sse_queue.put_nowait(("message", {
-                                    "type": "context_usage",
-                                    "data": ctx,
-                                }))
-                        except Exception as e:
-                            print(f"[WARN] get_context_usage failed: {e}")
-
-                        if jsonl_path.exists():
-                            with open(jsonl_path, "rb") as f:
-                                f.seek(jsonl_size_before)
-                                new_bytes = f.read()
-                            if new_bytes.strip():
-                                for line in new_bytes.split(b"\n"):
-                                    if not line.strip():
-                                        continue
-                                    try:
-                                        entry = json.loads(line.decode("utf-8", errors="replace"))
-                                    except Exception:
-                                        continue
-                                    if entry.get("type") != "user":
-                                        continue
-                                    msg_content = entry.get("message", {}).get("content", [])
-                                    if not isinstance(msg_content, list):
-                                        continue
-                                    for block in msg_content:
-                                        if block.get("type") != "tool_result":
+                            if jsonl_path.exists():
+                                with open(jsonl_path, "rb") as f:
+                                    f.seek(jsonl_size_before)
+                                    new_bytes = f.read()
+                                if new_bytes.strip():
+                                    for line in new_bytes.split(b"\n"):
+                                        if not line.strip():
                                             continue
-                                        tool_result = block.get("content", "")
-                                        text_parts = []
-                                        if isinstance(tool_result, list):
-                                            for item in tool_result:
-                                                if isinstance(item, dict):
-                                                    if item.get("type") == "text":
-                                                        text_parts.append(item.get("text", ""))
-                                        content = "".join(text_parts) if text_parts else str(tool_result)
-                                        source_uuid = entry.get("sourceToolAssistantUUID", "")
-                                        if source_uuid in pending_tools and pending_tools[source_uuid].get("name") == "StructuredOutput":
+                                        try:
+                                            entry = json.loads(line.decode("utf-8", errors="replace"))
+                                        except Exception:
                                             continue
-                                        if content:
-                                            sse_queue.put_nowait(("message", {
-                                                "type": "tool_result_content",
-                                                "tool_id": source_uuid,
-                                                "content": content,
-                                            }))
-                                    pending_tools.clear()
+                                        if entry.get("type") != "user":
+                                            continue
+                                        msg_content = entry.get("message", {}).get("content", [])
+                                        if not isinstance(msg_content, list):
+                                            continue
+                                        for block in msg_content:
+                                            if block.get("type") != "tool_result":
+                                                continue
+                                            tool_result = block.get("content", "")
+                                            text_parts = []
+                                            if isinstance(tool_result, list):
+                                                for item in tool_result:
+                                                    if isinstance(item, dict):
+                                                        if item.get("type") == "text":
+                                                            text_parts.append(item.get("text", ""))
+                                            content = "".join(text_parts) if text_parts else str(tool_result)
+                                            source_uuid = entry.get("sourceToolAssistantUUID", "")
+                                            if source_uuid in pending_tools and pending_tools[source_uuid].get("name") == "StructuredOutput":
+                                                continue
+                                            if content:
+                                                sse_queue.put_nowait(("message", {
+                                                    "type": "tool_result_content",
+                                                    "tool_id": source_uuid,
+                                                    "content": content,
+                                                }))
+                                        pending_tools.clear()
 
-                        sse_queue.put_nowait(("done", {
-                            "thread_id": session_id,
-                            "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                        }))
+                            sse_queue.put_nowait(("done", {
+                                "thread_id": session_id,
+                                "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
+                            }))
 
             except Exception as err:
                 print(f"Error during response_reader: {err}")
@@ -1089,13 +1473,30 @@ async def chat(request: ChatRequest):
         finally:
             # Resolve dangling permissions FIRST so wait_for in response_reader exits.
             # Only AFTER resolving should we cancel the reader task.
-            for rid, meta in list(_permission_meta.items()):
-                if meta.get("session_id") == session_id and _permission_futures.get(rid) and not _permission_futures[rid].done():
-                    _permission_futures[rid].set_result({"decision": "deny", "message": "Session ended"})
-                    _permission_futures.pop(rid, None)
-                    _permission_meta.pop(rid, None)
+            for key, fut in list(_permission_futures.items()):
+                if key[0] == session_id and not fut.done():
+                    fut.set_result({"decision": "deny", "message": "Session ended"})
+                    _permission_futures.pop(key, None)
+                    _permission_meta.pop(key, None)
             if not reader_task.done():
                 reader_task.cancel()
+                try:
+                    await reader_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            # ponytail: tear down the cached client so a stale subprocess can't be reused (Bug 1).
+            client = state.get("client")
+            if client is not None:
+                try:
+                    await client.interrupt()
+                except Exception:
+                    pass
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+            async with _cache_lock:
+                _WORKSPACE_CLIENTS.pop(state["cache_key"], None)
             # Clean up uploaded image files
             if request.image_paths:
                 for path in request.image_paths:
@@ -1110,6 +1511,63 @@ async def chat(request: ChatRequest):
         },
     )
 
+
+# ============== Streaming-Input Mode Endpoints (Phase 1+2) ==============
+
+@app.post("/api/sessions/{session_id}/messages")
+async def post_session_message(
+    session_id: str,
+    body: _UserMessage,
+    workspace: str = Query(...),
+):
+    # ponytail: trust boundary — validate UUID here, surfaces immediately in logs.
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="session_id must be a UUID")
+    loop = await get_or_create_loop(workspace, session_id)
+    await loop.enqueue(body)
+    return {"status": "queued", "session_id": session_id}
+
+
+@app.get("/api/sessions/{session_id}/events")
+async def session_events(session_id: str, workspace: str = Query(...)):
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="session_id must be a UUID")
+    loop = await get_or_create_loop(workspace, session_id)
+    sub_q = loop.subscribe()
+
+    async def stream():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(sub_q.get(), timeout=15)
+                    yield format_sse("message", event)
+                except asyncio.TimeoutError:
+                    # ponytail: keepalive so proxies don't reap the connection.
+                    yield format_sse("heartbeat", {"ts": asyncio.get_event_loop().time()})
+        finally:
+            loop.unsubscribe(sub_q)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.post("/api/sessions/{session_id}/interrupt")
+async def session_interrupt(session_id: str, workspace: str = Query(...)):
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="session_id must be a UUID")
+    loop = _SESSION_REGISTRY.get(session_id)
+    if loop is not None and loop.workspace == workspace:
+        await loop.interrupt()
+    return {"status": "interrupted", "session_id": session_id}
 
 
 

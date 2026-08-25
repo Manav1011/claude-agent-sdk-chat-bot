@@ -10,6 +10,9 @@ import {
   fetchPendingPermissions,
   submitPermissionDecision,
   streamChatApi,
+  sendSessionMessage,
+  interruptSession,
+  createSessionEventSource,
 } from '../utils/api';
 
 const ChatContext = createContext(null);
@@ -73,6 +76,10 @@ export function ChatProvider({ children }) {
   const [contextUsage, setContextUsage] = useState(null);
   const [activeStreams, setActiveStreams] = useState({});
   const abortControllersRef = useRef({});
+
+  // Per-session EventSource manager for streaming-input mode (one long-lived SSE per session).
+  // Map<threadId, { streamManager: { close, subscribe }, unsubscribe }>
+  const sessionStreamRef = useRef({});
 
   // Computed streaming state for current active thread
   const activeStreamContent = (currentThreadId && activeStreams[currentThreadId]?.streamContent) || '';
@@ -145,6 +152,50 @@ export function ChatProvider({ children }) {
       throw e;
     }
   }, [showNotification]);
+
+  // Resolve workspace path for an active project (returns null if not resolved yet).
+  const getWorkspacePath = useCallback(() => {
+    if (!activeProjectId) return null;
+    const proj = projects.find((p) => p.id === activeProjectId);
+    return proj ? proj.path : null;
+  }, [activeProjectId, projects]);
+
+  // Open long-lived SSE for a session. Idempotent — returns the existing handle if already open.
+  // The sessionEventHandler closure wires incoming events into React state.
+  const openSessionStream = useCallback((threadId, sessionEventHandler) => {
+    if (!threadId) return null;
+    const existing = sessionStreamRef.current[threadId];
+    if (existing) {
+      // If a different handler was registered, swap it.
+      if (existing.unsubscribe) existing.unsubscribe();
+      const unsub = existing.streamManager.subscribe(sessionEventHandler);
+      sessionStreamRef.current[threadId] = { ...existing, unsubscribe: unsub };
+      return existing.streamManager;
+    }
+    const ws = getWorkspacePath();
+    if (!ws) return null;
+    const streamManager = createSessionEventSource({ threadId, workspace: ws });
+    const unsubscribe = streamManager.subscribe(sessionEventHandler);
+    sessionStreamRef.current[threadId] = { streamManager, unsubscribe };
+    return streamManager;
+  }, [getWorkspacePath]);
+
+  const closeSessionStream = useCallback((threadId) => {
+    const handle = sessionStreamRef.current[threadId];
+    if (!handle) return;
+    try {
+      handle.unsubscribe();
+      handle.streamManager.close();
+    } catch (_) {}
+    delete sessionStreamRef.current[threadId];
+  }, []);
+
+  // Close all open session streams — for unmount or workspace switch.
+  const closeAllSessionStreams = useCallback(() => {
+    for (const tid of Object.keys(sessionStreamRef.current)) {
+      closeSessionStream(tid);
+    }
+  }, [closeSessionStream]);
 
   // Speech TTS State
   // Speech Audio State
@@ -728,7 +779,8 @@ export function ChatProvider({ children }) {
     }
   }, [currentThreadId, stopSpeechAudio, startNewChat]);
 
-  // Send Message & Stream
+  // Send Message & Stream — streaming-input mode: POST message to long-lived SSE session,
+  // event handler processes responses via openSessionStream subscription.
   const sendMessage = useCallback(async (text, imagePaths = [], imagePreviews = []) => {
     const cleanText = (text || '').trim();
     if (!cleanText && (!imagePaths || imagePaths.length === 0)) return;
@@ -742,8 +794,8 @@ export function ChatProvider({ children }) {
       setCurrentThread(sessionThreadId);
     }
 
-    if (activeStreams[sessionThreadId]?.isStreaming) return;
-
+    // ponytail: stream state is per-thread and built incrementally inside _handleSessionEvent
+    // (was: blocked new sends while stream active — now they queue at the server).
     const userImages = Array.isArray(imagePreviews) && imagePreviews.length > 0
       ? imagePreviews
       : (Array.isArray(imagePaths) ? imagePaths : []);
@@ -780,9 +832,6 @@ export function ChatProvider({ children }) {
       return prev;
     });
 
-    const abortCtrl = new AbortController();
-    abortControllersRef.current[sessionThreadId] = abortCtrl;
-
     setActiveStreams(prev => ({
       ...prev,
       [sessionThreadId]: {
@@ -796,293 +845,251 @@ export function ChatProvider({ children }) {
 
     setErrorMessage(null);
 
-    let streamAccumulatedAi = '';
-    let streamAccumulatedThinking = '';
-    let speechExpl = null;
+    // Open long-lived SSE for this session if not already open. Subscribe a per-thread handler
+    // that converts backend events into React state updates.
+    openSessionStream(sessionThreadId, (parsed) => _handleSessionEvent(sessionThreadId, parsed));
 
+    // Fire-and-forget POST. Errors surface through the SSE error event from the backend.
     try {
-      for await (const { event, data } of streamChatApi({
-        message: cleanText,
-        imagePaths,
+      await sendSessionMessage({
         threadId: sessionThreadId,
-        projectId: activeProjectId,
-        speechExplanation,
-        settingSources,
-        skillsMode,
-        skillsList,
-        permissionMode,
-        signal: abortCtrl.signal,
-      })) {
-        const incomingSessionId = data.session_id || data.thread_id;
-        if (incomingSessionId && incomingSessionId !== sessionThreadId) {
-          const prevId = sessionThreadId;
-          sessionThreadId = incomingSessionId;
-          setCurrentThread(incomingSessionId);
-          abortControllersRef.current[incomingSessionId] = abortCtrl;
-          delete abortControllersRef.current[prevId];
-
-          setOpenTabs((prev) =>
-            prev.map((t) => (t.threadId === prevId ? { ...t, threadId: incomingSessionId } : t))
-          );
-          setActiveStreams(prev => {
-            const next = { ...prev, [incomingSessionId]: prev[prevId] || {} };
-            delete next[prevId];
-            return next;
-          });
-          setMessages(prev => {
-            const existing = prev[prevId] || [];
-            const updated = { ...prev, [incomingSessionId]: existing };
-            if (prevId !== incomingSessionId) delete updated[prevId];
-            return updated;
-          });
-        }
-
-        if (event === 'message') {
-          if (data.type === 'human') continue;
-
-          if (data.type === 'context_usage') {
-            setContextUsage(data.data);
-            continue;
-          }
-
-          if (data.type === 'permission_request') {
-            setActiveStreams(prev => ({
-              ...prev,
-              [sessionThreadId]: {
-                ...(prev[sessionThreadId] || {}),
-                isAiResponding: false,
-              },
-            }));
-            const reqItem = {
-              ...data,
-              session_id: data.session_id || sessionThreadId,
-            };
-            setPendingPermissions((prev) => {
-              if (prev.some((r) => r.request_id === data.request_id)) return prev;
-              return [...prev, reqItem];
-            });
-            continue;
-          }
-
-          if (data.type === 'speech_explanation') {
-            speechExpl = data.content;
-            setActiveStreams(prev => ({
-              ...prev,
-              [sessionThreadId]: {
-                ...(prev[sessionThreadId] || {}),
-                speechExplanation: data.content,
-              },
-            }));
-            continue;
-          }
-
-          if (data.type === 'text_delta') {
-            streamAccumulatedAi += data.content;
-            setActiveStreams(prev => ({
-              ...prev,
-              [sessionThreadId]: {
-                ...(prev[sessionThreadId] || {}),
-                isStreaming: true,
-                isAiResponding: false,
-                streamContent: streamAccumulatedAi,
-              },
-            }));
-          } else if (data.type === 'thinking_delta') {
-            streamAccumulatedThinking += data.content;
-            setActiveStreams(prev => ({
-              ...prev,
-              [sessionThreadId]: {
-                ...(prev[sessionThreadId] || {}),
-                isStreaming: true,
-                isAiResponding: false,
-                thinkingContent: streamAccumulatedThinking,
-              },
-            }));
-          } else if (data.type === 'tool_result' || data.type === 'tool') {
-            if (streamAccumulatedAi || streamAccumulatedThinking) {
-              const pendingItems = [];
-              if (streamAccumulatedThinking) {
-                pendingItems.push({ type: 'thinking', content: streamAccumulatedThinking });
-                streamAccumulatedThinking = '';
-              }
-              if (streamAccumulatedAi) {
-                pendingItems.push({
-                  type: 'ai',
-                  content: streamAccumulatedAi,
-                  speech_explanation: speechExpl,
-                });
-                streamAccumulatedAi = '';
-                speechExpl = null;
-              }
-              if (pendingItems.length > 0) {
-                setMessages(prev => ({
-                  ...prev,
-                  [sessionThreadId]: [...(prev[sessionThreadId] || []), ...pendingItems],
-                }));
-              }
-            }
-
-            setActiveStreams(prev => ({
-              ...prev,
-              [sessionThreadId]: {
-                ...(prev[sessionThreadId] || {}),
-                streamContent: '',
-                thinkingContent: '',
-                isAiResponding: true,
-              },
-            }));
-
-            const toolItem = {
-              type: 'tool',
-              name: data.tool_name || data.name || 'Tool',
-              tool_name: data.tool_name || data.name || 'Tool',
-              tool_id: data.tool_id || data.id,
-              input: data.args || data.input || {},
-              args: data.args || data.input || {},
-              content: data.content ?? data.output ?? data.result ?? '',
-            };
-
-            setMessages(prev => ({
-              ...prev,
-              [sessionThreadId]: [...(prev[sessionThreadId] || []), toolItem],
-            }));
-          } else if (data.type === 'tool_result_content') {
-            setMessages(prev => {
-              const currentList = prev[sessionThreadId] || [];
-              const updatedList = [...currentList];
-              let found = false;
-              if (data.tool_id) {
-                for (let i = updatedList.length - 1; i >= 0; i--) {
-                  if (updatedList[i].tool_id === data.tool_id || updatedList[i].id === data.tool_id) {
-                    updatedList[i] = {
-                      ...updatedList[i],
-                      content: data.content,
-                    };
-                    found = true;
-                    break;
-                  }
-                }
-              }
-              if (!found) {
-                for (let i = updatedList.length - 1; i >= 0; i--) {
-                  if (updatedList[i].type === 'tool' || updatedList[i].type === 'tool_result') {
-                    updatedList[i] = {
-                      ...updatedList[i],
-                      content: data.content,
-                    };
-                    found = true;
-                    break;
-                  }
-                }
-              }
-              return {
-                ...prev,
-                [sessionThreadId]: updatedList,
-              };
-            });
-          } else {
-            setMessages(prev => ({
-              ...prev,
-              [sessionThreadId]: [...(prev[sessionThreadId] || []), data],
-            }));
-          }
-        } else if (event === 'done') {
-          const threadChanged = data.thread_id && data.thread_id !== sessionThreadId;
-          const finalThreadId = threadChanged ? data.thread_id : sessionThreadId;
-          if (threadChanged) {
-            setCurrentThread(data.thread_id);
-          }
-
-          const itemsToCommit = [];
-          if (streamAccumulatedThinking) {
-            itemsToCommit.push({ type: 'thinking', content: streamAccumulatedThinking });
-          }
-          if (streamAccumulatedAi) {
-            itemsToCommit.push({
-              type: 'ai',
-              content: streamAccumulatedAi,
-              speech_explanation: speechExpl,
-              usage: data.usage || null,
-            });
-          }
-
-          if (itemsToCommit.length > 0) {
-            setMessages(prev => ({
-              ...prev,
-              [finalThreadId]: [...(prev[finalThreadId] || prev[sessionThreadId] || []), ...itemsToCommit],
-            }));
-          }
-
-          setActiveStreams(prev => {
-            const next = { ...prev };
-            delete next[finalThreadId];
-            delete next[sessionThreadId];
-            return next;
-          });
-
-          if (isNewSession || threadChanged) {
-            if (activeProjectId) {
-              await loadProjectSessions(activeProjectId);
-            }
-          }
-        } else if (event === 'error') {
-          setErrorMessage(data.message || 'Stream processing failed');
-        }
-      }
+        workspace: getWorkspacePath(),
+        content: cleanText,
+        images: userImages,
+      });
     } catch (err) {
-      if (err.name === 'AbortError') {
-        if (streamAccumulatedAi) {
-          setMessages(prev => ({
-            ...prev,
-            [sessionThreadId]: [
-              ...(prev[sessionThreadId] || []),
-              {
-                type: 'ai',
-                content: streamAccumulatedAi,
-                speech_explanation: speechExpl,
-                usage: null,
-              },
-            ],
-          }));
-        }
-      } else {
-        setErrorMessage(err.message || 'Failed to communicate with agent server');
+      setErrorMessage(err.message || 'Failed to send message');
+    }
+  }, [
+    currentThreadId,
+    activeProjectId,
+    openSessionStream,
+    getWorkspacePath,
+    setCurrentThread,
+  ]);
+
+  // Session Event Handler — converts events from the long-lived SessionLoop SSE into React state.
+  // `streamContent` / `thinkingContent` live in activeStreams[threadId] so message queueing
+  // doesn't conflate turns — each 'done' resets them so the next turn shows the new stream.
+  const _handleSessionEvent = useCallback((sessionThreadId, parsed) => {
+    const event = parsed.event;
+    const data = parsed.data;
+    if (!data || data.type === 'human') return;
+
+    if (event === 'heartbeat') return;
+
+    if (event === 'error') {
+      setErrorMessage(data.message || 'Stream processing failed');
+      return;
+    }
+
+    if (event !== 'message') return;
+
+    if (data.type === 'context_usage') {
+      setContextUsage(data.data);
+      return;
+    }
+
+    if (data.type === 'permission_request') {
+      setActiveStreams(prev => ({
+        ...prev,
+        [sessionThreadId]: { ...(prev[sessionThreadId] || {}), isAiResponding: false },
+      }));
+      const reqItem = { ...data, session_id: data.session_id || sessionThreadId };
+      setPendingPermissions((prev) => (
+        prev.some((r) => r.request_id === data.request_id) ? prev : [...prev, reqItem]
+      ));
+      return;
+    }
+
+    if (data.type === 'permission_resolved') {
+      setPendingPermissions((prev) => prev.filter((r) => r.request_id !== data.request_id));
+      // Agent will resume after we resolve; mark responding again.
+      setActiveStreams(prev => ({
+        ...prev,
+        [sessionThreadId]: { ...(prev[sessionThreadId] || {}), isAiResponding: true },
+      }));
+      return;
+    }
+
+    if (data.type === 'speech_explanation') {
+      setActiveStreams(prev => ({
+        ...prev,
+        [sessionThreadId]: { ...(prev[sessionThreadId] || {}), speechExplanation: data.content },
+      }));
+      return;
+    }
+
+    if (data.type === 'text_delta') {
+      setActiveStreams(prev => {
+        const cur = prev[sessionThreadId] || {};
+        return {
+          ...prev,
+          [sessionThreadId]: {
+            ...cur,
+            isStreaming: true,
+            isAiResponding: false,
+            streamContent: (cur.streamContent || '') + (data.content || ''),
+          },
+        };
+      });
+      return;
+    }
+
+    if (data.type === 'thinking_delta') {
+      setActiveStreams(prev => {
+        const cur = prev[sessionThreadId] || {};
+        return {
+          ...prev,
+          [sessionThreadId]: {
+            ...cur,
+            isStreaming: true,
+            isAiResponding: false,
+            thinkingContent: (cur.thinkingContent || '') + (data.content || ''),
+          },
+        };
+      });
+      return;
+    }
+
+    if (data.type === 'tool_result' || data.type === 'tool') {
+      // Flush accumulated stream into messages before adding the tool entry.
+      const cur = activeStreams[sessionThreadId] || {};
+      const itemsToCommit = [];
+      if (cur.thinkingContent) {
+        itemsToCommit.push({ type: 'thinking', content: cur.thinkingContent });
       }
-    } finally {
-      delete abortControllersRef.current[sessionThreadId];
+      if (cur.streamContent) {
+        itemsToCommit.push({
+          type: 'ai',
+          content: cur.streamContent,
+          speech_explanation: cur.speechExplanation || null,
+        });
+      }
+      if (itemsToCommit.length > 0) {
+        setMessages(prev => ({
+          ...prev,
+          [sessionThreadId]: [...(prev[sessionThreadId] || []), ...itemsToCommit],
+        }));
+      }
+
+      setActiveStreams(prev => ({
+        ...prev,
+        [sessionThreadId]: {
+          ...(prev[sessionThreadId] || {}),
+          streamContent: '',
+          thinkingContent: '',
+          isAiResponding: true,
+        },
+      }));
+
+      const toolItem = {
+        type: 'tool',
+        name: data.tool_name || data.name || 'Tool',
+        tool_name: data.tool_name || data.name || 'Tool',
+        tool_id: data.tool_id || data.id,
+        input: data.args || data.input || {},
+        args: data.args || data.input || {},
+        content: data.content ?? data.output ?? data.result ?? '',
+      };
+      setMessages(prev => ({
+        ...prev,
+        [sessionThreadId]: [...(prev[sessionThreadId] || []), toolItem],
+      }));
+      return;
+    }
+
+    if (data.type === 'tool_result_content') {
+      setMessages(prev => {
+        const currentList = prev[sessionThreadId] || [];
+        const updatedList = [...currentList];
+        let found = false;
+        if (data.tool_id) {
+          for (let i = updatedList.length - 1; i >= 0; i--) {
+            if (updatedList[i].tool_id === data.tool_id || updatedList[i].id === data.tool_id) {
+              updatedList[i] = { ...updatedList[i], content: data.content };
+              found = true;
+              break;
+            }
+          }
+        }
+        if (!found) {
+          for (let i = updatedList.length - 1; i >= 0; i--) {
+            if (updatedList[i].type === 'tool' || updatedList[i].type === 'tool_result') {
+              updatedList[i] = { ...updatedList[i], content: data.content };
+              found = true;
+              break;
+            }
+          }
+        }
+        return { ...prev, [sessionThreadId]: updatedList };
+      });
+      return;
+    }
+
+    if (data.type === 'done') {
+      const cur = activeStreams[sessionThreadId] || {};
+      const itemsToCommit = [];
+      if (cur.thinkingContent) {
+        itemsToCommit.push({ type: 'thinking', content: cur.thinkingContent });
+      }
+      if (cur.streamContent) {
+        itemsToCommit.push({
+          type: 'ai',
+          content: cur.streamContent,
+          speech_explanation: cur.speechExplanation || null,
+          usage: data.usage || null,
+        });
+      }
+      if (itemsToCommit.length > 0) {
+        setMessages(prev => ({
+          ...prev,
+          [sessionThreadId]: [...(prev[sessionThreadId] || []), ...itemsToCommit],
+        }));
+      }
       setActiveStreams(prev => {
         const next = { ...prev };
         delete next[sessionThreadId];
         return next;
       });
+      if (data.thread_id && data.thread_id !== sessionThreadId) {
+        setCurrentThread(data.thread_id);
+      }
+      return;
     }
-  }, [
-    activeStreams,
-    currentThreadId,
-    activeProjectId,
-    speechExplanation,
-    settingSources,
-    skillsMode,
-    skillsList,
-    permissionMode,
-    setCurrentThread,
-    loadProjectSessions,
-  ]);
 
-  const stopStream = useCallback((targetThreadId) => {
+    // Generic fallback — append unknown event types as messages.
+    setMessages(prev => ({
+      ...prev,
+      [sessionThreadId]: [...(prev[sessionThreadId] || []), data],
+    }));
+  }, [activeStreams, setCurrentThread]);
+
+  const stopStream = useCallback(async (targetThreadId) => {
     const threadId = (typeof targetThreadId === 'string' && targetThreadId) ? targetThreadId : currentThreadId;
-    if (threadId && abortControllersRef.current[threadId]) {
-      abortControllersRef.current[threadId].abort();
+    if (!threadId) return;
+    // New: tell the backend SessionLoop to interrupt the agent mid-turn.
+    // (Old abort-controller approach only tore down the SSE reader; the subprocess kept running.)
+    try {
+      const ws = getWorkspacePath();
+      if (ws) {
+        await interruptSession({ threadId, workspace: ws });
+      }
+    } catch (err) {
+      console.error('interruptSession failed', err);
+    }
+    // Clean up the legacy abort-controller entries just in case.
+    if (abortControllersRef.current[threadId]) {
+      try { abortControllersRef.current[threadId].abort(); } catch (_) {}
       delete abortControllersRef.current[threadId];
     }
-    if (threadId) {
-      setActiveStreams(prev => {
-        const next = { ...prev };
-        delete next[threadId];
-        return next;
-      });
-    }
-  }, [currentThreadId]);
+    // Clear per-thread stream state so UI stops showing it.
+    setActiveStreams(prev => {
+      const next = { ...prev };
+      delete next[threadId];
+      return next;
+    });
+  }, [currentThreadId, getWorkspacePath]);
 
   // Initial mount
   useEffect(() => {
@@ -1093,6 +1100,11 @@ export function ChatProvider({ children }) {
       }
     });
   }, []);
+
+  // Cleanup: tear down all EventSources on unmount.
+  useEffect(() => {
+    return () => closeAllSessionStreams();
+  }, [closeAllSessionStreams]);
 
   const value = {
     projects,
