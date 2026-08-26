@@ -1,6 +1,6 @@
 {
-  "name": "explainer-bot",
-  "short_name": "explainer",
+  "name": "webclaude",
+  "short_name": "webclaude",
   "description": "Chat with Claude to explore and explain code",
   "start_url": "/",
   "scope": "/",

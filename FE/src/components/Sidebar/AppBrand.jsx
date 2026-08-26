@@ -10,7 +10,7 @@ export default function AppBrand() {
           </svg>
         </div>
         <div>
-          <span className="font-semibold text-xs text-white">Explainer Bot</span>
+          <span className="font-semibold text-xs text-white">WebClaude</span>
           <span className="text-[9px] text-txt-subtle block font-mono">Workspace Studio</span>
         </div>
       </div>

@@ -4,6 +4,7 @@ pydantic>=2.0.0
 claude-agent-sdk
 uvicorn[standard]>=0.20.0
 piper-tts
+python-multipart>=0.0.7
 requests
 
 # Optional — install when needed

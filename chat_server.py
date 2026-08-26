@@ -223,6 +223,12 @@ class SessionLoop:
         # settings are ignored — the client is already running with the locked
         # set, and rebuilding would lose the conversation context.
         self._locked_settings: dict | None = None
+        # ponytail: FE permission_mode changes must take effect on the next
+        # tool call, not the next session. _locked_settings freezes the *client
+        # build*, but the user can still tighten/loosen per-tool access live —
+        # can_use_tool reads this and denies out-of-scope tools when read_only.
+        # Updated on every enqueued message, distinct from the build-time lock.
+        self._current_permission_mode: str | None = None
 
     def _touch(self):
         self._last_activity = asyncio.get_event_loop().time()
@@ -319,6 +325,17 @@ class SessionLoop:
         loop_ref = self
 
         async def can_use_tool(tool_name: str, tool_input: dict, context: ToolPermissionContext):
+            # ponytail: runtime read-only gate. The SDK client is built once with
+            # the locked permission_mode and we never rebuild it mid-session
+            # (would lose context). When the user flips the FE toggle to
+            # read_only, _current_permission_mode is updated and every tool
+            # call from then on is denied here if it's outside the read-only
+            # allowlist. Without this, "Full Access → Read-Only" silently
+            # has no effect because the CLI was launched with bypassPermissions
+            # and the tool whitelist from the original build stays in force.
+            if loop_ref._current_permission_mode == "read_only" and tool_name not in _READ_ONLY_TOOLS:
+                print(f"[READ_ONLY] {self.session_id} denied {tool_name} (current_permission_mode=read_only)")
+                return PermissionResultDeny(message=f"Tool '{tool_name}' is blocked: session is in read-only mode")
             request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex}"
             fut: asyncio.Future = asyncio.Future()
             _permission_futures[(self.session_id, request_id)] = fut
@@ -405,6 +422,12 @@ class SessionLoop:
                     "skills": msg.skills,
                     "permission_mode": msg.permission_mode,
                 }
+            # ponytail: permission_mode is the one field that MUST update on
+            # every message — can_use_tool reads it to gate live tool calls
+            # (FE lets the user flip Full Access → Read-Only mid-session).
+            # The SDK client can't be rebuilt without losing context, so this
+            # is the only enforcement point that reflects the toggle.
+            self._current_permission_mode = msg.permission_mode
             # Reset per-turn state so each enqueued user message starts fresh.
             self._pending_tools = {}
             self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
@@ -1383,9 +1406,16 @@ async def chat(request: ChatRequest):
         if speech_mode:
             opts.output_format = SYSTEM_PROMPT_EXPLANATION_SCHEMA
 
-        # Wire permission callback; SDK auto-sets permission_prompt_tool_name="stdio"
-        # when can_use_tool is set, routing all permission requests through the callback
-        opts.can_use_tool = can_use_tool
+        # Wire permission callback for FE dialogs + AskUserQuestion. But skip it
+        # when the user picked "Full Access" (bypassPermissions): the SDK auto-sets
+        # permission_prompt_tool_name="stdio" whenever can_use_tool is set, and that
+        # flag makes the CLI restrict the active tool set — Write/Edit/Bash vanish
+        # from the agent even though bypassPermissions is also passed. The whole
+        # point of Full Access is "no per-tool ask", so the stdio detour is the
+        # wrong path. CLI gets just --permission-mode bypassPermissions and auto-
+        # approves everything.
+        if request.permission_mode != 'bypassPermissions':
+            opts.can_use_tool = can_use_tool
 
         # Remember JSONL file size before this turn so we can read only new entries
         # after the turn completes to get actual tool result content

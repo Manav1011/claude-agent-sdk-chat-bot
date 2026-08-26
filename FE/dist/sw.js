@@ -1,6 +1,6 @@
 // ponytail: keep the SW dumb. Precache the shell so the app loads offline
 // after first visit; let the network handle everything else (especially /api/*).
-const CACHE = 'explainer-shell-v1';
+const CACHE = 'webclaude-shell-v1';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {

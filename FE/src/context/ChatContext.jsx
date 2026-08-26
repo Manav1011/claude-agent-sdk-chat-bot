@@ -485,10 +485,10 @@ export function ChatProvider({ children }) {
   }, [loadProjectSessions]);
 
   // Toggle Project Expand/Collapse
+  // ponytail: clicking a project header is just expand/collapse. activeProjectId
+  // is owned by selectSession / startNewChat — flipping it here used to switch
+  // the running chat's workspace whenever you peeked at another project's sessions.
   const toggleProject = useCallback(async (projectId) => {
-    setActiveProjectId(projectId);
-    localStorage.setItem('qa-active-project-id', projectId);
-
     setExpandedProjects(prev => {
       const next = new Set(prev);
       if (next.has(projectId)) {
