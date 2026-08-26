@@ -216,7 +216,11 @@ class SessionLoop:
         await self._incoming.put(msg)
 
     def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=1024)
+        # ponytail: unbounded — when the FE falls behind, broadcast must NEVER drop.
+        # The previous maxsize=1024 silently lost text_deltas / done on slow renders
+        # (queue filled, put_nowait raised QueueFull, `pass` swallowed the event).
+        # Bounded in practice by events-per-turn (a few MB at most).
+        q: asyncio.Queue = asyncio.Queue()
         self._subscribers.add(q)
         self._touch()
         return q
@@ -964,7 +968,7 @@ async def list_sessions(project_id: int | None = None):
     """List sessions using SDK — no DB needed."""
     ws = _resolve_workspace(project_id)
 
-    raw = sdk_list_sessions(directory=ws, limit=50)
+    raw = sdk_list_sessions(directory=ws, limit=0)
     sessions = [
         SessionResponse(
             thread_id=s.session_id,
@@ -1066,7 +1070,7 @@ async def add_project(request: ProjectCreate):
 
 
 @app.get("/api/projects/{project_id}/sessions", response_model=ProjectSessionsResponse)
-async def get_project_sessions(project_id: int):
+async def get_project_sessions(project_id: int, limit: int = 5, offset: int = 0):
     """Get sessions for a project by reading SDK JSONL sessions list."""
     with _get_db() as db:
         row = db.execute("SELECT path FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -1074,7 +1078,11 @@ async def get_project_sessions(project_id: int):
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_path = row["path"]
-    raw = sdk_list_sessions(directory=project_path, limit=50)
+    # ponytail: ask for one extra to detect "has more" without a second round-trip.
+    # SDK doesn't expose a total count, so over-fetching by 1 is the cheapest signal.
+    raw = sdk_list_sessions(directory=project_path, limit=limit + 1, offset=offset)
+    has_more = len(raw) > limit
+    page = raw[:limit]
     sessions = [
         SessionResponse(
             thread_id=s.session_id,
@@ -1082,9 +1090,9 @@ async def get_project_sessions(project_id: int):
             created_at=str(s.created_at) if s.created_at else None,
             last_modified=s.last_modified,
         )
-        for s in raw
+        for s in page
     ]
-    return ProjectSessionsResponse(sessions=sessions)
+    return ProjectSessionsResponse(sessions=sessions, has_more=has_more)
 
 
 @app.delete("/api/projects/{project_id}")
@@ -1114,7 +1122,7 @@ async def select_workspace(request: WorkspaceSelectRequest):
 async def get_current_workspace(session_id: str | None = None):
     if session_id:
         # Try to find which workspace this session belongs to via SDK
-        sessions = sdk_list_sessions(limit=100)
+        sessions = sdk_list_sessions(limit=0)
         for s in sessions:
             if s.session_id == session_id:
                 return {"workspace": s.cwd or _DEFAULT_WORKSPACE}

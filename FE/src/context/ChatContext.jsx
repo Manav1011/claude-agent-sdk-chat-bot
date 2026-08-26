@@ -41,6 +41,9 @@ export function ChatProvider({ children }) {
   const [expandedProjects, setExpandedProjects] = useState(new Set());
   const [loadingProjects, setLoadingProjects] = useState(new Set());
   const [projectSessions, setProjectSessions] = useState({});
+  // ponytail: per-project pagination state — { has_more: bool, loading: bool }.
+  // Sessions are still keyed by projectId in projectSessions; meta is keyed the same.
+  const [projectSessionsMeta, setProjectSessionsMeta] = useState({});
 
   // Sessions & Messages
   const [currentThreadId, setCurrentThreadId] = useState(() => {
@@ -396,13 +399,18 @@ export function ChatProvider({ children }) {
     }
   }, []);
 
-  // Load Sessions for a project
+  // Load Sessions for a project (initial 5).
   const loadProjectSessions = useCallback(async (projectId) => {
+    setProjectSessionsMeta(prev => ({ ...prev, [projectId]: { ...prev[projectId], loading: true } }));
     try {
-      const data = await fetchProjectSessions(projectId);
+      const data = await fetchProjectSessions(projectId, { limit: 5, offset: 0 });
       setProjectSessions(prev => ({
         ...prev,
         [projectId]: data.sessions || [],
+      }));
+      setProjectSessionsMeta(prev => ({
+        ...prev,
+        [projectId]: { has_more: !!data.has_more, loading: false },
       }));
       return data.sessions || [];
     } catch (e) {
@@ -411,9 +419,35 @@ export function ChatProvider({ children }) {
         ...prev,
         [projectId]: [],
       }));
+      setProjectSessionsMeta(prev => ({
+        ...prev,
+        [projectId]: { has_more: false, loading: false },
+      }));
       return [];
     }
   }, []);
+
+  // Load the next page of sessions for a project (10 at a time).
+  const loadMoreSessions = useCallback(async (projectId) => {
+    const meta = projectSessionsMeta[projectId];
+    if (!meta || !meta.has_more || meta.loading) return;
+    setProjectSessionsMeta(prev => ({ ...prev, [projectId]: { ...prev[projectId], loading: true } }));
+    try {
+      const current = projectSessions[projectId] || [];
+      const data = await fetchProjectSessions(projectId, { limit: 10, offset: current.length });
+      setProjectSessions(prev => ({
+        ...prev,
+        [projectId]: [...(prev[projectId] || []), ...(data.sessions || [])],
+      }));
+      setProjectSessionsMeta(prev => ({
+        ...prev,
+        [projectId]: { has_more: !!data.has_more, loading: false },
+      }));
+    } catch (e) {
+      console.error('Failed to load more sessions:', e);
+      setProjectSessionsMeta(prev => ({ ...prev, [projectId]: { ...prev[projectId], loading: false } }));
+    }
+  }, [projectSessions, projectSessionsMeta]);
 
   // Load Projects
   const loadProjects = useCallback(async () => {
@@ -1312,6 +1346,8 @@ export function ChatProvider({ children }) {
     addNewProject,
     deleteProject,
     loadProjectSessions,
+    loadMoreSessions,
+    projectSessionsMeta,
     selectSession,
     loadOlderMessages,
     deleteSession,

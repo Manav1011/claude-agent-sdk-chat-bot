@@ -29,6 +29,7 @@ class ProjectSessionsResponse(BaseModel):
     """Sessions belonging to a specific project."""
 
     sessions: list
+    has_more: bool = False
 
 
 class SessionResponse(BaseModel):

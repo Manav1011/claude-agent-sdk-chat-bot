@@ -29,8 +29,8 @@ export async function deleteProjectApi(projectId) {
   return res.json();
 }
 
-export async function fetchProjectSessions(projectId) {
-  const res = await fetch(`/api/projects/${projectId}/sessions`);
+export async function fetchProjectSessions(projectId, { limit = 5, offset = 0 } = {}) {
+  const res = await fetch(`/api/projects/${projectId}/sessions?limit=${limit}&offset=${offset}`);
   if (!res.ok) throw new Error('Failed to fetch sessions');
   return res.json();
 }

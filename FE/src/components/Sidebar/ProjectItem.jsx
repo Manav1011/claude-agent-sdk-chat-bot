@@ -3,7 +3,6 @@ import { useChat } from '../../context/ChatContext';
 import SessionItem from './SessionItem';
 
 const STORAGE_KEY = 'qa-sidebar-expanded-projects';
-const RECENT_LIMIT = 5;
 
 function readExpandedSet() {
   try {
@@ -20,28 +19,24 @@ export default function ProjectItem({ project }) {
     expandedProjects,
     loadingProjects,
     projectSessions,
+    projectSessionsMeta,
     toggleProject,
     deleteProject,
     startNewChat,
     loadProjectSessions,
+    loadMoreSessions,
   } = useChat();
 
   const isExpanded = expandedProjects.has(project.id);
   const isLoading = loadingProjects.has(project.id);
   const sessions = projectSessions[project.id] || [];
+  const sessionMeta = projectSessionsMeta?.[project.id] || {};
+  const hasMore = !!sessionMeta.has_more;
+  const loadingMore = !!sessionMeta.loading;
 
-  const [showAllMap, setShowAllMap] = useState(() => readExpandedSet());
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify([...showAllMap]));
-    } catch {}
-  }, [showAllMap]);
-  const showAll = showAllMap.has(project.id);
   const sorted = [...sessions].sort(
     (a, b) => (b.last_modified || 0) - (a.last_modified || 0)
   );
-  const visible = showAll ? sorted : sorted.slice(0, RECENT_LIMIT);
-  const hiddenCount = Math.max(0, sorted.length - RECENT_LIMIT);
 
   const handleHeaderClick = (e) => {
     if (e.target.closest('.delete-project-btn') || e.target.closest('.project-new-chat-btn')) return;
@@ -150,11 +145,11 @@ export default function ProjectItem({ project }) {
             <>
               {/* Tree connector: vertical line down the left, horizontal "branch" stubs. */}
               <div className="relative pl-5 ml-3.5 mt-0.5 space-y-0.5 before:absolute before:left-0 before:top-0 before:bottom-3 before:w-px before:bg-dark-border/70">
-                {visible.map((s, idx) => (
+                {sorted.map((s, idx) => (
                   <div key={s.thread_id} className="relative">
                     {/* Horizontal branch stub connecting the tree line to the row */}
                     <span className="absolute -left-3.5 top-1/2 w-3 h-px bg-dark-border/70" aria-hidden="true" />
-                    {idx === visible.length - 1 && hiddenCount === 0 && (
+                    {idx === sorted.length - 1 && !hasMore && (
                       // Last row, nothing below: cap the vertical line at this row.
                       <span className="absolute -left-[1px] top-0 bottom-1/2 w-px bg-dark-surface/40" aria-hidden="true" />
                     )}
@@ -162,30 +157,28 @@ export default function ProjectItem({ project }) {
                   </div>
                 ))}
               </div>
-              {hiddenCount > 0 && (
+              {hasMore && (
                 <div className="relative pl-5 ml-3.5">
                   <span className="absolute -left-3.5 top-1/2 w-3 h-px bg-dark-border/70" aria-hidden="true" />
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowAllMap((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(project.id)) next.delete(project.id);
-                        else next.add(project.id);
-                        return next;
-                      });
-                    }}
-                    className="mt-1 text-[10.5px] text-txt-subtle hover:text-brand font-medium flex items-center gap-1 px-1.5 py-1 rounded-md hover:bg-white/[0.04] transition-colors cursor-pointer"
+                    onClick={() => loadMoreSessions(project.id)}
+                    disabled={loadingMore}
+                    className="mt-1 text-[10.5px] text-txt-subtle hover:text-brand font-medium flex items-center gap-1 px-1.5 py-1 rounded-md hover:bg-white/[0.04] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
                   >
                     <svg
-                      className={`w-3 h-3 transition-transform ${showAll ? 'rotate-180' : ''}`}
+                      className={`w-3 h-3 ${loadingMore ? 'animate-spin' : ''}`}
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
                     >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                      {loadingMore ? (
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 12a8 8 0 018-8M4 12a8 8 0 008 8" />
+                      ) : (
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                      )}
                     </svg>
-                    {showAll ? 'Show recent only' : `Show all (${hiddenCount} more)`}
+                    {loadingMore ? 'Loading…' : 'Show more'}
                   </button>
                 </div>
               )}
