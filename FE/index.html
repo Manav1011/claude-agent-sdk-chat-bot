@@ -2,7 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0c0d10" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -18,5 +20,16 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // ponytail: register SW only in production. Vite dev server has its own
+      // HMR service worker; mixing them in dev breaks hot reload.
+      if ('serviceWorker' in navigator && location.protocol !== 'blob:') {
+        if (import.meta.env && import.meta.env.PROD) {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('SW register failed', e));
+          });
+        }
+      }
+    </script>
   </body>
 </html>

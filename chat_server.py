@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse, Response
+from fastapi.responses import HTMLResponse, StreamingResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal, Any
@@ -156,6 +156,27 @@ app.add_middleware(
 
 if (_FE_DIST_PATH / "assets").exists():
     app.mount("/assets", StaticFiles(directory=_FE_DIST_PATH / "assets"), name="assets")
+
+
+# ponytail: serve the PWA shell assets from dist/ root. StaticFiles on "/" would
+# shadow the rest of the routes, so explicit FileResponse per file is the
+# smallest correct change. MIME for .webmanifest is set explicitly because some
+# proxies guess it wrong; Chrome's installability check rejects bad MIME.
+_PWA_SHELL = {
+    "/manifest.webmanifest": "application/manifest+json",
+    "/sw.js": "application/javascript",
+    "/icon.svg": "image/svg+xml",
+    "/icon-192.png": "image/png",
+    "/icon-512.png": "image/png",
+    "/apple-touch-icon.png": "image/png",
+}
+
+for _route, _mime in _PWA_SHELL.items():
+    _file = _FE_DIST_PATH / _route.lstrip("/")
+    if _file.exists():
+        async def _serve(_path=_file, _media=_mime):
+            return FileResponse(_path, media_type=_media)
+        app.add_api_route(_route, _serve, methods=["GET"], include_in_schema=False)
 
 # Per-workspace SDK client cache (legacy /api/chat; new SessionLoop owns the long-lived clients)
 _WORKSPACE_CLIENTS: dict[str, ClaudeSDKClient] = {}
