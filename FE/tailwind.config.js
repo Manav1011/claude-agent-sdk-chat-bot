@@ -15,16 +15,16 @@ export default {
           border: 'rgba(241, 105, 19, 0.3)',
         },
         dark: {
-          bg: '#0c0d10',
-          surface: '#14151a',
-          elevated: '#1c1e26',
-          border: '#2a2d37',
-          muted: '#343846',
+          bg: 'rgb(var(--color-dark-bg) / <alpha-value>)',
+          surface: 'rgb(var(--color-dark-surface) / <alpha-value>)',
+          elevated: 'rgb(var(--color-dark-elevated) / <alpha-value>)',
+          border: 'rgb(var(--color-dark-border) / <alpha-value>)',
+          muted: 'rgb(var(--color-dark-muted) / <alpha-value>)',
         },
         txt: {
-          main: '#f3f4f6',
-          muted: '#9ca3af',
-          subtle: '#6b7280',
+          main: 'rgb(var(--color-txt-main) / <alpha-value>)',
+          muted: 'rgb(var(--color-txt-muted) / <alpha-value>)',
+          subtle: 'rgb(var(--color-txt-subtle) / <alpha-value>)',
         }
       },
       fontFamily: {

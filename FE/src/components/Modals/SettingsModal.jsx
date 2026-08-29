@@ -15,6 +15,8 @@ export default function SettingsModal() {
     setSkillsList,
     speechExplanation,
     setSpeechExplanation,
+    theme,
+    setTheme,
   } = useChat();
 
   const [newSkillText, setNewSkillText] = useState('');
@@ -333,6 +335,40 @@ export default function SettingsModal() {
                 }`}
               />
             </button>
+          </div>
+
+          {/* 5. Theme Selector */}
+          <div className="flex items-center justify-between p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60">
+            <div className="space-y-0.5 pr-4">
+              <div className="text-xs font-medium text-white">Theme</div>
+              <div className="text-[11px] text-txt-subtle leading-relaxed">
+                Choose between dark and light appearance.
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[11px] font-medium min-w-[130px]">
+              <button
+                type="button"
+                onClick={() => setTheme('dark')}
+                className={`py-1 px-2.5 rounded transition-colors text-center cursor-pointer ${
+                  (theme || 'dark') === 'dark'
+                    ? 'bg-brand text-white shadow-sm'
+                    : 'text-txt-subtle hover:text-white'
+                }`}
+              >
+                Dark
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme('light')}
+                className={`py-1 px-2.5 rounded transition-colors text-center cursor-pointer ${
+                  theme === 'light'
+                    ? 'bg-brand text-white shadow-sm'
+                    : 'text-txt-subtle hover:text-white'
+                }`}
+              >
+                Light
+              </button>
+            </div>
           </div>
         </div>
 

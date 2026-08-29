@@ -2,6 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --color-dark-bg: 12 13 16;
+  --color-dark-surface: 20 21 26;
+  --color-dark-elevated: 28 30 38;
+  --color-dark-border: 42 45 55;
+  --color-dark-muted: 52 56 70;
+  --color-txt-main: 243 244 246;
+  --color-txt-muted: 156 163 175;
+  --color-txt-subtle: 107 114 128;
+}
+
+html.light {
+  --color-dark-bg: 248 249 250;
+  --color-dark-surface: 255 255 255;
+  --color-dark-elevated: 241 243 245;
+  --color-dark-border: 226 232 240;
+  --color-dark-muted: 203 213 225;
+  --color-txt-main: 17 24 39;
+  --color-txt-muted: 75 85 99;
+  --color-txt-subtle: 107 114 128;
+}
+
 /* Global Reset & Glassmorphism */
 html,
 body,
@@ -10,8 +32,8 @@ body,
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
-  background-color: #0c0d10;
-  color: #f3f4f6;
+  background-color: rgb(var(--color-dark-bg));
+  color: rgb(var(--color-txt-main));
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
@@ -30,6 +52,11 @@ body,
 .bg-ambient {
   background: radial-gradient(circle at 50% 0%, rgba(241, 105, 19, 0.08) 0%, transparent 60%),
               radial-gradient(circle at 100% 100%, rgba(20, 21, 26, 0.8) 0%, transparent 50%);
+}
+
+html.light .bg-ambient {
+  background: radial-gradient(circle at 50% 0%, rgba(241, 105, 19, 0.05) 0%, transparent 60%),
+              radial-gradient(circle at 100% 100%, rgba(241, 243, 245, 0.9) 0%, transparent 50%);
 }
 
 /* Custom Matching Scrollbar */
@@ -219,3 +246,71 @@ body,
 .animate-sheet-up {
   animation: sheetUp 320ms cubic-bezier(0.32, 0.72, 0, 1);
 }
+
+/* Light mode overrides */
+html.light ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+}
+html.light * {
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+
+html.light .prose-dark {
+  color: #24292f;
+}
+html.light .prose-dark > p:first-child {
+  color: #111827;
+}
+html.light .prose-dark h1,
+html.light .prose-dark h2,
+html.light .prose-dark h3,
+html.light .prose-dark h4 {
+  color: #111827;
+}
+html.light .prose-dark strong {
+  color: #111827;
+}
+html.light .prose-dark em {
+  color: #1f2937;
+}
+html.light .prose-dark blockquote {
+  color: #4b5563;
+  border-left-color: rgba(241, 105, 19, 0.6);
+}
+html.light .prose-dark th {
+  background-color: #f1f5f9;
+  color: #111827;
+  border-color: #e2e8f0;
+}
+html.light .prose-dark td {
+  border-color: #e2e8f0;
+}
+html.light .prose-dark tr:nth-child(even) {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+html.light .prose-dark code:not(pre code) {
+  background: #f1f5f9;
+  color: #ea580c;
+  border: 1px solid rgba(234, 88, 12, 0.2);
+}
+html.light .prose-dark pre {
+  background: #f8fafc !important;
+  border-color: #e2e8f0;
+}
+html.light .prose-dark pre code {
+  color: #1e293b;
+}
+
+html.light .bg-\[\#121318\],
+html.light .bg-\[\#0a0b0e\] {
+  background-color: #f8fafc;
+}
+
+html.light .text-white:not(.bg-brand *):not(.bg-brand):not(.bg-rose-500 *):not(.bg-rose-500):not(.bg-rose-600 *):not(.bg-rose-600):not(.bg-emerald-500 *):not(.bg-emerald-500):not(.bg-emerald-600 *):not(.bg-emerald-600):not(.speech-play-btn):not(.speech-play-btn *):not([class*="bg-brand"]):not([class*="bg-rose-"]):not([class*="bg-emerald-"]) {
+  color: #111827;
+}
+
+html.light .hover\:text-white:hover:not(.bg-brand *):not(.bg-brand):not(.bg-rose-500 *):not(.bg-rose-500):not(.bg-rose-600 *):not(.bg-rose-600):not([class*="bg-brand"]):not([class*="bg-rose-"]):not([class*="bg-emerald-"]) {
+  color: #111827;
+}
+

@@ -52,7 +52,7 @@ export default function Header() {
   }, [menuOpen]);
 
   return (
-    <header className="h-14 sm:h-12 px-3 sm:px-4 border-b border-dark-border/60 bg-dark-surface/40 backdrop-blur-md flex items-center justify-between shrink-0 relative">
+    <header className="h-14 sm:h-12 px-3 sm:px-4 border-b border-dark-border/60 bg-dark-surface/40 backdrop-blur-md flex items-center justify-between shrink-0 relative z-30">
       <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
         <button
           type="button"
