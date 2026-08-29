@@ -1,3 +1,14 @@
+export async function verifyPasswordApi(password) {
+  const res = await fetch('/api/auth/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) return false;
+  const data = await res.json().catch(() => ({}));
+  return Boolean(data.valid);
+}
+
 export async function fetchProjects() {
   const res = await fetch('/api/projects');
   if (!res.ok) throw new Error('Failed to fetch projects');

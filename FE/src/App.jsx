@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChatProvider, useChat } from './context/ChatContext';
+import { verifyPasswordApi } from './utils/api';
 import Sidebar from './components/Sidebar/Sidebar';
 import Header from './components/Header/Header';
 import TabBar from './components/Header/TabBar';
@@ -31,9 +32,48 @@ function AppContent() {
 }
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    if (isAuthenticated) return;
+    let isMounted = true;
+
+    async function promptPassword() {
+      while (isMounted) {
+        const input = window.prompt('Please enter the password to access:');
+        if (input === null) {
+          window.alert('Password is required to access.');
+          continue;
+        }
+        try {
+          const isValid = await verifyPasswordApi(input);
+          if (isValid) {
+            if (isMounted) setIsAuthenticated(true);
+            break;
+          } else {
+            window.alert('Incorrect password. Please try again.');
+          }
+        } catch {
+          window.alert('Verification failed. Please try again.');
+        }
+      }
+    }
+
+    promptPassword();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthenticated]);
+
+  if (!isAuthenticated) {
+    return null;
+  }
+
   return (
     <ChatProvider>
       <AppContent />
     </ChatProvider>
   );
 }
+

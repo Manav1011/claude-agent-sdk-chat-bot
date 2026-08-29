@@ -1027,7 +1027,16 @@ class MessagesResponse(BaseModel):
     next_cursor: int | None = None
 
 
+class AuthVerifyRequest(BaseModel):
+    password: str
+
+
 # ============== Routes ==============
+
+@app.post("/api/auth/verify")
+async def verify_auth(req: AuthVerifyRequest):
+    return {"valid": req.password == "MS@1011"}
+
 
 @app.get("/")
 async def root():
