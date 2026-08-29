@@ -1,0 +1,2084 @@
+  <!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QA Automation Studio</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Markdown & Code Highlighting Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              DEFAULT: '#f16913',
+              hover: '#ff7b25',
+              glow: 'rgba(241, 105, 19, 0.15)',
+              border: 'rgba(241, 105, 19, 0.3)',
+            },
+            dark: {
+              bg: '#0c0d10',
+              surface: '#14151a',
+              elevated: '#1c1e26',
+              border: '#2a2d37',
+              muted: '#343846',
+            },
+            txt: {
+              main: '#f3f4f6',
+              muted: '#9ca3af',
+              subtle: '#6b7280',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          boxShadow: {
+            'glow': '0 0 20px rgba(241, 105, 19, 0.15)',
+            'card-glow': '0 4px 20px -2px rgba(0, 0, 0, 0.5)',
+          }
+        },
+      },
+    }
+  </script>
+
+  <style>
+    /* Global Reset & Glassmorphism */
+    body {
+      background-color: #0c0d10;
+      color: #f3f4f6;
+      font-family: 'Inter', sans-serif;
+      overflow: hidden;
+    }
+
+    /* Ambient background glow */
+    .bg-ambient {
+      background: radial-gradient(circle at 50% 0%, rgba(241, 105, 19, 0.08) 0%, transparent 60%),
+                  radial-gradient(circle at 100% 100%, rgba(20, 21, 26, 0.8) 0%, transparent 50%);
+    }
+
+    /* Custom Matching Scrollbar */
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.28);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(241, 105, 19, 0.7);
+    }
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+    }
+
+    /* Markdown styling inside assistant messages */
+    .prose-dark {
+      color: #e5e7eb;
+      font-size: 0.925rem;
+      line-height: 1.6;
+      word-break: break-word;
+      overflow-wrap: break-word;
+      max-width: 100%;
+    }
+    .prose-dark p {
+      margin-bottom: 0.75rem;
+    }
+    .prose-dark p:last-child {
+      margin-bottom: 0;
+    }
+    .prose-dark h1, .prose-dark h2, .prose-dark h3, .prose-dark h4 {
+      color: #ffffff;
+      font-weight: 600;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+      word-break: break-word;
+    }
+    .prose-dark ul {
+      list-style-type: disc;
+      padding-left: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .prose-dark ol {
+      list-style-type: decimal;
+      padding-left: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    .prose-dark li {
+      margin-bottom: 0.25rem;
+      word-break: break-word;
+    }
+    .prose-dark code:not(pre code) {
+      background: #2a2d37;
+      color: #f16913;
+      padding: 0.15rem 0.4rem;
+      border-radius: 0.25rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.825em;
+      word-break: break-all;
+    }
+    .prose-dark pre {
+      background: #14151a !important;
+      border: 1px solid #2a2d37;
+      border-radius: 0.5rem;
+      margin: 0.75rem 0;
+      position: relative;
+      overflow-x: auto;
+      max-width: 100%;
+    }
+    .prose-dark pre code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.825rem;
+      padding: 1rem !important;
+      display: block;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .prose-dark table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+      font-size: 0.85rem;
+      display: block;
+      overflow-x: auto;
+      max-width: 100%;
+    }
+    .prose-dark th {
+      background-color: #1c1e26;
+      color: #ffffff;
+      font-weight: 600;
+      text-align: left;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid #2a2d37;
+    }
+    .prose-dark td {
+      padding: 0.5rem 0.8rem;
+      border: 1px solid #2a2d37;
+    }
+    .prose-dark tr:nth-child(even) {
+      background-color: rgba(28, 30, 38, 0.4);
+    }
+
+    /* Message animation */
+    @keyframes slideUpFade {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .animate-msg {
+      animation: slideUpFade 0.25s ease-out forwards;
+    }
+
+    /* Typing Dots Animation */
+    @keyframes dotPulse {
+      0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+      40% { opacity: 1; transform: scale(1.1); }
+    }
+    .pulse-dot {
+      animation: dotPulse 1.4s infinite ease-in-out both;
+    }
+    .pulse-dot:nth-child(1) { animation-delay: -0.32s; }
+    .pulse-dot:nth-child(2) { animation-delay: -0.16s; }
+  </style>
+</head>
+<body class="bg-dark-bg text-txt-main h-screen flex flex-col antialiased selection:bg-brand selection:text-white">
+  
+  <div class="flex h-full w-full bg-ambient relative overflow-hidden">
+    
+    <!-- Mobile Sidebar Backdrop -->
+    <div id="sidebar-backdrop" class="fixed inset-0 bg-black/60 z-30 hidden lg:hidden backdrop-blur-sm transition-opacity"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-72 bg-dark-surface/95 backdrop-blur-md border-r border-dark-border flex flex-col shrink-0 transition-transform duration-300 -translate-x-full lg:translate-x-0 lg:static">
+      
+      <!-- App Brand Row -->
+      <div class="p-3 border-b border-dark-border flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-brand to-amber-600 flex items-center justify-center shadow-glow text-dark-bg font-bold">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <div>
+            <span class="font-semibold text-xs text-white">Explainer Bot</span>
+            <span class="text-[9px] text-txt-subtle block font-mono">Workspace Studio</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Projects Section Header with Expand/Collapse & Add Project -->
+      <div class="px-3 pt-3 pb-1.5 flex items-center justify-between text-[11px] font-semibold text-txt-subtle uppercase tracking-wider">
+        <div class="flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5 text-txt-subtle" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+          </svg>
+          <span>Projects</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <button id="expand-all-btn" title="Expand all projects" class="p-1 rounded hover:bg-dark-elevated hover:text-white text-txt-subtle transition-colors flex items-center justify-center" aria-label="Expand all">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <button id="collapse-all-btn" title="Collapse all projects" class="p-1 rounded hover:bg-dark-elevated hover:text-white text-txt-subtle transition-colors flex items-center justify-center" aria-label="Collapse all">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+            </svg>
+          </button>
+          <button id="add-project-btn" title="Add project by path" class="px-2 py-0.5 rounded-md bg-dark-elevated hover:bg-dark-border text-txt-subtle hover:text-white transition-colors flex items-center gap-1 text-[10px] normal-case font-medium border border-dark-border ml-0.5">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            <span>Add</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Add Project Inline Form (Hidden by default) -->
+      <div id="add-project-form" class="mx-3 my-2 p-2.5 bg-dark-elevated/90 border border-brand/40 rounded-xl space-y-2 text-xs hidden animate-msg">
+        <div class="font-medium text-[11px] text-white flex items-center justify-between">
+          <span>Add Project</span>
+          <button id="cancel-add-project-btn" class="text-txt-subtle hover:text-white text-sm leading-none">&times;</button>
+        </div>
+        <input id="new-project-path-input" type="text" placeholder="/path/to/project" class="w-full bg-dark-bg border border-dark-border rounded-lg px-2.5 py-1.5 text-[11px] text-white font-mono placeholder:text-txt-subtle focus:outline-none focus:border-brand-border" />
+        <input id="new-project-name-input" type="text" placeholder="Project name (optional)" class="w-full bg-dark-bg border border-dark-border rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder:text-txt-subtle focus:outline-none focus:border-brand-border" />
+        <button id="submit-add-project-btn" class="w-full bg-brand hover:bg-brand-hover text-white text-[11px] font-medium py-1.5 rounded-lg transition-colors shadow-glow">Track Project</button>
+      </div>
+
+      <!-- Projects & Sessions Tree Container -->
+      <div id="projects-container" class="flex-1 overflow-y-auto px-2 py-1 space-y-1.5"></div>
+
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 flex flex-col min-w-0 h-full relative overflow-hidden">
+      
+      <!-- Unified Header Bar -->
+      <header class="h-12 px-3 sm:px-5 border-b border-dark-border/60 bg-dark-surface/40 backdrop-blur-md flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2.5">
+          <button id="menu-toggle" class="lg:hidden p-1.5 text-txt-muted hover:text-white rounded-lg bg-dark-elevated border border-dark-border" title="Toggle menu">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+          </button>
+          <span class="font-medium text-xs sm:text-sm text-white tracking-wide">QA Automation</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button id="settings-btn" title="Settings" class="p-1.5 rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border text-txt-muted hover:text-white transition-colors flex items-center justify-center">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Chat Messages Scroll Container -->
+      <div id="messages-container" class="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5 pb-32 sm:pb-36 space-y-4 w-full min-w-0">
+        
+        <!-- Empty State -->
+        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center my-auto py-10 w-full max-w-3xl lg:max-w-4xl mx-auto">
+          <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-brand/20 to-amber-500/10 border border-brand-border flex items-center justify-center mb-4 shadow-glow">
+            <svg class="w-6 h-6 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+            </svg>
+          </div>
+          <h2 class="text-base sm:text-lg font-semibold text-white mb-1.5">What would you like to explore?</h2>
+          <p class="text-txt-muted text-xs sm:text-sm max-w-md mb-6 leading-relaxed">
+            Ask questions, run automation workflows, or explore spoken AI explanations.
+          </p>
+
+          <!-- Prompt Cards -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-md">
+            <button class="prompt-chip text-left p-3 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand-border transition-all duration-200 group">
+              <div class="font-medium text-xs text-white group-hover:text-brand mb-0.5">What skills do you have?</div>
+              <div class="text-[11px] text-txt-subtle truncate">List all installed capabilities</div>
+            </button>
+            <button class="prompt-chip text-left p-3 rounded-xl bg-dark-surface hover:bg-dark-elevated border border-dark-border hover:border-brand-border transition-all duration-200 group">
+              <div class="font-medium text-xs text-white group-hover:text-brand mb-0.5">Explain Machine Learning</div>
+              <div class="text-[11px] text-txt-subtle truncate">Get a clear explanation with voice audio</div>
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Floating Input Container -->
+      <div class="absolute bottom-0 left-0 right-0 z-20 pointer-events-none bg-gradient-to-t from-dark-bg via-dark-bg/85 to-transparent pt-8 pb-3 px-3 sm:pb-4 sm:px-4">
+        <div class="w-full max-w-2xl lg:max-w-3xl mx-auto min-w-0">
+
+          <!-- Smart Capsule Card -->
+          <div class="pointer-events-auto relative rounded-2xl bg-dark-surface/95 backdrop-blur-2xl border border-dark-border focus-within:border-brand/60 focus-within:shadow-[0_0_25px_rgba(249,115,22,0.12)] shadow-2xl transition-all duration-200 p-2 sm:p-2.5 flex flex-col gap-1.5">
+            
+            <!-- Textarea -->
+            <textarea
+              id="message-input"
+              rows="1"
+              placeholder="Type a message or prompt..."
+              class="w-full bg-transparent text-xs sm:text-sm text-txt-main placeholder-txt-subtle focus:outline-none resize-none max-h-48 font-sans leading-relaxed block overflow-y-auto min-h-[26px] px-1.5 py-1"
+            ></textarea>
+
+            <!-- Bottom Toolbar -->
+            <div class="flex items-center justify-between gap-2 pt-1 border-t border-dark-border/40">
+              
+              <!-- Left: Context Usage Pill & Voice Mode Toggle Pill -->
+              <div class="flex items-center gap-1.5 min-w-0">
+                <!-- Context Pill -->
+                <button
+                  id="context-usage-pill"
+                  type="button"
+                  class="hidden items-center gap-1.5 px-2 py-0.5 rounded-lg bg-dark-elevated/70 hover:bg-dark-elevated border border-dark-border/60 hover:border-brand/40 text-[11px] font-mono transition-all group shrink-0"
+                  onclick="showContextModal()"
+                  title="View context window breakdown"
+                >
+                  <span id="context-pill-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span id="context-pill-label" class="text-txt-muted group-hover:text-white font-medium">0% context</span>
+                </button>
+
+                <!-- Quick Voice Mode Pill -->
+                <button
+                  id="quick-voice-btn"
+                  type="button"
+                  class="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-sans transition-all border shrink-0"
+                  title="Toggle spoken explanations for AI responses"
+                >
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                  </svg>
+                  <span id="quick-voice-label">Voice</span>
+                </button>
+              </div>
+
+              <!-- Right: Send / Stop Action Button -->
+              <button
+                id="send-btn"
+                disabled
+                title="Send message"
+                class="bg-brand hover:bg-brand-hover text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-25 disabled:hover:bg-brand shadow-sm active:scale-95 shrink-0"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                </svg>
+              </button>
+
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // ============== Setup Markdown Renderer ==============
+    marked.setOptions({
+      highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(code, { language: lang }).value;
+        }
+        return hljs.highlightAuto(code).value;
+      },
+      breaks: true
+    });
+
+    // Helper to get initial setting_sources
+    function getInitialSettingSources() {
+      const stored = localStorage.getItem('qa-setting-sources');
+      if (stored === 'user') return ['user'];
+      if (stored === 'local') return ['local'];
+      if (stored && stored.startsWith('[')) {
+        try { return JSON.parse(stored); } catch(e) { return null; }
+      }
+      return null;
+    }
+
+    // ============== State Management ==============
+    const state = {
+      currentThreadId: localStorage.getItem('qa-chat-current-thread') || null,
+      activeProjectId: localStorage.getItem('qa-active-project-id') ? parseInt(localStorage.getItem('qa-active-project-id'), 10) : null,
+      projects: [],
+      projectSessions: {},
+      expandedProjects: new Set(),
+      loadingProjects: new Set(),
+      messages: {},
+      sessionCursors: {},
+      isLoadingOlder: {},
+      isSelectingSession: false,
+      speechExplanation: localStorage.getItem('qa-speech-explanation') === 'true',
+      settingSources: getInitialSettingSources(),
+      skillsMode: localStorage.getItem('qa-skills-mode') === 'all' ? 'default' : (localStorage.getItem('qa-skills-mode') || 'default'),
+      skillsList: JSON.parse(localStorage.getItem('qa-skills-list') || '[]'),
+      permissionMode: localStorage.getItem('qa-permission-mode') || null,
+      contextUsage: null,
+      isStreaming: false,
+      abortController: null,
+    };
+
+    function setCurrentThread(threadId) {
+      state.currentThreadId = threadId;
+      if (threadId) {
+        localStorage.setItem('qa-chat-current-thread', threadId);
+      } else {
+        localStorage.removeItem('qa-chat-current-thread');
+      }
+    }
+
+    function getSessionMessages(threadId) {
+      return state.messages[threadId] || [];
+    }
+
+    // ============== Elements Reference ==============
+    const el = {
+      sidebar: document.getElementById('sidebar'),
+      sidebarBackdrop: document.getElementById('sidebar-backdrop'),
+      projectsContainer: document.getElementById('projects-container'),
+      expandAllBtn: document.getElementById('expand-all-btn'),
+      collapseAllBtn: document.getElementById('collapse-all-btn'),
+      addProjectBtn: document.getElementById('add-project-btn'),
+      addProjectForm: document.getElementById('add-project-form'),
+      newProjectPathInput: document.getElementById('new-project-path-input'),
+      newProjectNameInput: document.getElementById('new-project-name-input'),
+      submitAddProjectBtn: document.getElementById('submit-add-project-btn'),
+      cancelAddProjectBtn: document.getElementById('cancel-add-project-btn'),
+      messagesContainer: document.getElementById('messages-container'),
+      emptyState: document.getElementById('empty-state'),
+      messageInput: document.getElementById('message-input'),
+      sendBtn: document.getElementById('send-btn'),
+      menuToggle: document.getElementById('menu-toggle'),
+      settingsBtn: document.getElementById('settings-btn'),
+      contextUsagePill: document.getElementById('context-usage-pill'),
+      contextPillDot: document.getElementById('context-pill-dot'),
+      contextPillLabel: document.getElementById('context-pill-label'),
+      quickVoiceBtn: document.getElementById('quick-voice-btn'),
+      quickVoiceLabel: document.getElementById('quick-voice-label'),
+    };
+
+    // ============== Projects & Sessions API ==============
+    async function loadProjects() {
+      try {
+        const res = await fetch('/api/projects');
+        if (!res.ok) return;
+        const data = await res.json();
+        state.projects = data.projects || [];
+
+        // If no projects tracked yet, auto-add default workspace as initial project
+        if (state.projects.length === 0) {
+          try {
+            const wsRes = await fetch('/api/workspace');
+            if (wsRes.ok) {
+              const wsData = await wsRes.json();
+              const defaultPath = wsData.workspace || '.';
+              const name = defaultPath.split('/').filter(Boolean).pop() || 'Default Project';
+              const createRes = await fetch('/api/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, path: defaultPath })
+              });
+              if (createRes.ok) {
+                const newProj = await createRes.json();
+                state.projects = [newProj];
+              }
+            }
+          } catch (err) {
+            console.error('Failed to auto-add default project:', err);
+          }
+        }
+
+        // Auto-expand active or first project
+        if (state.projects.length > 0) {
+          const activeProj = state.projects.find(p => p.id === state.activeProjectId) || state.projects[0];
+          if (activeProj) {
+            state.activeProjectId = activeProj.id;
+            localStorage.setItem('qa-active-project-id', activeProj.id);
+            state.expandedProjects.add(activeProj.id);
+            await loadProjectSessions(activeProj.id);
+          }
+        }
+
+        renderProjects();
+      } catch (e) {
+        console.error('Failed to load projects:', e);
+      }
+    }
+
+    async function loadProjectSessions(projectId) {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/sessions`);
+        if (res.ok) {
+          const data = await res.json();
+          state.projectSessions[projectId] = data.sessions || [];
+        } else {
+          state.projectSessions[projectId] = [];
+        }
+      } catch (e) {
+        console.error('Failed to load project sessions:', e);
+        state.projectSessions[projectId] = [];
+      }
+    }
+
+    async function addNewProject(name, path) {
+      if (!path || !path.trim()) {
+        showNotification('Please provide a valid project directory path', 'error');
+        return false;
+      }
+      const cleanPath = path.trim();
+      const projName = (name && name.trim()) ? name.trim() : (cleanPath.split('/').filter(Boolean).pop() || 'Project');
+
+      try {
+        const res = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: projName, path: cleanPath })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          showNotification(data.detail || 'Failed to add project', 'error');
+          return false;
+        }
+
+        state.projects.unshift(data);
+        state.activeProjectId = data.id;
+        localStorage.setItem('qa-active-project-id', data.id);
+        state.expandedProjects.add(data.id);
+        await loadProjectSessions(data.id);
+        renderProjects();
+        startNewChat();
+        showNotification(`Project "${projName}" added`, 'success');
+        return true;
+      } catch (e) {
+        showNotification(e.message || 'Failed to add project', 'error');
+        return false;
+      }
+    }
+
+    async function deleteProject(projectId) {
+      try {
+        const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+        if (res.ok) {
+          state.projects = state.projects.filter(p => p.id !== projectId);
+          state.expandedProjects.delete(projectId);
+          delete state.projectSessions[projectId];
+          if (state.activeProjectId === projectId) {
+            if (state.projects.length > 0) {
+              state.activeProjectId = state.projects[0].id;
+              localStorage.setItem('qa-active-project-id', state.projects[0].id);
+              state.expandedProjects.add(state.projects[0].id);
+              await loadProjectSessions(state.projects[0].id);
+            } else {
+              state.activeProjectId = null;
+              localStorage.removeItem('qa-active-project-id');
+            }
+          }
+          renderProjects();
+          showNotification('Project removed from tracking', 'info');
+        }
+      } catch (e) {
+        showNotification('Failed to remove project', 'error');
+      }
+    }
+
+    async function toggleProject(projectId) {
+      const proj = state.projects.find(p => p.id === projectId);
+      if (proj) {
+        state.activeProjectId = proj.id;
+        localStorage.setItem('qa-active-project-id', proj.id);
+      }
+
+      if (state.expandedProjects.has(projectId)) {
+        state.expandedProjects.delete(projectId);
+        renderProjects();
+      } else {
+        state.expandedProjects.add(projectId);
+        if (!state.projectSessions[projectId]) {
+          state.loadingProjects.add(projectId);
+          renderProjects();
+          await loadProjectSessions(projectId);
+          state.loadingProjects.delete(projectId);
+        }
+        renderProjects();
+      }
+    }
+
+    async function expandAllProjects() {
+      const toLoad = [];
+      state.projects.forEach(p => {
+        state.expandedProjects.add(p.id);
+        if (!state.projectSessions[p.id]) {
+          state.loadingProjects.add(p.id);
+          toLoad.push(loadProjectSessions(p.id).then(() => state.loadingProjects.delete(p.id)));
+        }
+      });
+      renderProjects();
+      if (toLoad.length > 0) {
+        await Promise.all(toLoad);
+        renderProjects();
+      }
+    }
+
+    function collapseAllProjects() {
+      state.expandedProjects.clear();
+      renderProjects();
+    }
+
+    // ============== Streaming Logic ==============
+    async function* streamChat(message, threadId, signal) {
+      let skillsPayload = null;
+      if (state.skillsMode === 'none') {
+        skillsPayload = [];
+      } else if (state.skillsMode === 'custom') {
+        skillsPayload = Array.isArray(state.skillsList) ? state.skillsList : [];
+      }
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          message, 
+          thread_id: threadId,
+          project_id: state.activeProjectId || null,
+          speech_explanation: Boolean(state.speechExplanation),
+          setting_sources: state.settingSources,
+          skills: skillsPayload,
+          permission_mode: state.permissionMode,
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned error ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (const part of parts) {
+            const lines = part.split('\n');
+            let currentEvent = null;
+            let eventData = null;
+
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                currentEvent = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
+                try {
+                  eventData = JSON.parse(line.slice(6).trim());
+                } catch (e) {}
+              }
+            }
+
+            if (currentEvent && eventData !== null) {
+              yield { event: currentEvent, data: eventData };
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    // ============== Render Functions ==============
+    function renderProjects() {
+      if (!el.projectsContainer) return;
+
+      if (!state.projects || state.projects.length === 0) {
+        el.projectsContainer.innerHTML = `
+          <div class="px-3 py-6 text-center text-xs text-txt-subtle border border-dashed border-dark-border rounded-xl my-2">
+            No projects yet — add one to get started
+          </div>
+        `;
+        return;
+      }
+
+      el.projectsContainer.innerHTML = state.projects.map(project => {
+        const isExpanded = state.expandedProjects.has(project.id);
+        const isActive = state.activeProjectId === project.id;
+        const isLoading = state.loadingProjects.has(project.id);
+        const sessions = state.projectSessions[project.id] || [];
+
+        let sessionsHtml = '';
+        if (isExpanded) {
+          if (isLoading) {
+            sessionsHtml = `
+              <div class="py-2.5 px-4 text-center text-[10px] text-txt-subtle font-mono flex items-center justify-center gap-1.5">
+                <svg class="w-3 h-3 animate-spin text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Loading conversations...</span>
+              </div>
+            `;
+          } else if (sessions.length === 0) {
+            sessionsHtml = `
+              <div class="py-2 px-5 text-[10px] text-txt-subtle italic flex items-center justify-between">
+                <span>No conversations yet</span>
+                <button class="project-new-chat-btn text-[10px] text-brand hover:text-brand-hover font-medium underline cursor-pointer" data-project-id="${project.id}">Start chat</button>
+              </div>
+            `;
+          } else {
+            sessionsHtml = `
+              <div class="pl-3 pr-1 py-1 space-y-0.5 border-l border-dark-border/40 ml-3.5 my-1">
+                ${sessions.map(s => {
+                  const isCurrentSession = s.thread_id === state.currentThreadId;
+                  const rawTitle = s.first_message && s.first_message !== s.thread_id ? s.first_message : 'New conversation';
+                  const truncatedTitle = rawTitle.length > 40 ? rawTitle.slice(0, 40) + '...' : rawTitle;
+                  return `
+                    <div class="session-item group px-2.5 py-1.5 rounded-lg cursor-pointer transition-all duration-150 flex items-center justify-between ${isCurrentSession ? 'bg-dark-elevated border border-brand/40 text-white font-medium shadow-sm' : 'hover:bg-dark-elevated/50 text-txt-muted hover:text-white border border-transparent'}" data-thread-id="${s.thread_id}" data-project-id="${project.id}">
+                      <span class="text-[11px] truncate flex-1 leading-snug">${escapeHtml(truncatedTitle)}</span>
+                      <button class="delete-session-btn opacity-0 group-hover:opacity-100 p-0.5 hover:text-red-400 text-txt-subtle transition-opacity ml-1 shrink-0" data-thread-id="${s.thread_id}" data-project-id="${project.id}" title="Delete session">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                      </button>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `;
+          }
+        }
+
+        return `
+          <div class="project-card rounded-xl border transition-all ${isActive ? 'bg-dark-surface/60 border-dark-border' : 'border-transparent hover:border-dark-border/40'}" data-project-id="${project.id}">
+            <div class="project-header group px-2.5 py-2 rounded-xl cursor-pointer flex items-center justify-between hover:bg-dark-elevated/40 transition-colors" data-project-id="${project.id}">
+              <div class="flex items-center gap-2 min-w-0 flex-1">
+                <svg class="project-chevron w-3.5 h-3.5 text-txt-subtle transition-transform duration-200 shrink-0 ${isExpanded ? 'rotate-90 text-brand' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/>
+                </svg>
+                <span class="font-medium text-xs text-white truncate" title="${escapeHtml(project.path)}">${escapeHtml(project.name)}</span>
+              </div>
+              <div class="flex items-center gap-0.5 shrink-0">
+                <button class="project-new-chat-btn opacity-0 group-hover:opacity-100 p-1 hover:text-brand text-txt-subtle transition-opacity" data-project-id="${project.id}" title="New conversation in ${escapeHtml(project.name)}">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                  </svg>
+                </button>
+                <button class="delete-project-btn opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 text-txt-subtle transition-opacity" data-project-id="${project.id}" title="Remove project from tracking">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            ${sessionsHtml}
+          </div>
+        `;
+      }).join('');
+
+      // Project expand/collapse click
+      el.projectsContainer.querySelectorAll('.project-header').forEach(header => {
+        header.addEventListener('click', async (e) => {
+          if (e.target.closest('.delete-project-btn') || e.target.closest('.project-new-chat-btn')) return;
+          const projectId = parseInt(header.dataset.projectId, 10);
+          await toggleProject(projectId);
+        });
+      });
+
+      // Per-project New Chat button click
+      el.projectsContainer.querySelectorAll('.project-new-chat-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const projectId = parseInt(btn.dataset.projectId, 10);
+          const proj = state.projects.find(p => p.id === projectId);
+          if (proj) {
+            state.activeProjectId = proj.id;
+            localStorage.setItem('qa-active-project-id', proj.id);
+            state.expandedProjects.add(proj.id);
+          }
+          startNewChat();
+        });
+      });
+
+      // Project delete click
+      el.projectsContainer.querySelectorAll('.delete-project-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const projectId = parseInt(btn.dataset.projectId, 10);
+          if (confirm('Remove this project from sidebar tracking? (Files and conversations will be preserved)')) {
+            await deleteProject(projectId);
+          }
+        });
+      });
+
+      // Session click
+      el.projectsContainer.querySelectorAll('.session-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          if (e.target.closest('.delete-session-btn')) return;
+          const threadId = item.dataset.threadId;
+          const projectId = parseInt(item.dataset.projectId, 10);
+          const proj = state.projects.find(p => p.id === projectId);
+          if (proj) {
+            state.activeProjectId = proj.id;
+            localStorage.setItem('qa-active-project-id', proj.id);
+          }
+          selectSession(threadId);
+        });
+      });
+
+      // Session delete click
+      el.projectsContainer.querySelectorAll('.delete-session-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const threadId = btn.dataset.threadId;
+          const projectId = parseInt(btn.dataset.projectId, 10);
+          await deleteSession(threadId, projectId);
+        });
+      });
+    }
+
+    function renderMessageNode(msg) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0';
+
+      if (msg.type === 'human') {
+        wrapper.innerHTML = `
+          <div class="flex justify-end mb-2.5 min-w-0 max-w-full">
+            <div class="bg-dark-elevated/90 text-txt-main text-xs sm:text-sm rounded-xl px-3 py-1.5 max-w-[80%] w-fit break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</div>
+          </div>
+        `;
+      } else if (msg.type === 'ai') {
+        const parsedContent = marked.parse(msg.content || '');
+        const usageBadge = msg.usage ? `
+          <div class="mt-2 pt-1.5 border-t border-dark-border/40 flex items-center gap-3 font-mono text-[10px] text-txt-subtle flex-wrap">
+            <span title="Input tokens">in: <strong class="text-txt-muted">${msg.usage.input_tokens || 0}</strong></span>
+            <span title="Output tokens">out: <strong class="text-txt-muted">${msg.usage.output_tokens || 0}</strong></span>
+            <span title="Total tokens">total: <strong class="text-brand">${msg.usage.total_tokens || 0}</strong></span>
+          </div>
+        ` : '';
+
+        wrapper.innerHTML = `
+          <div class="mb-4 w-full min-w-0 max-w-full">
+            <div class="prose-dark ai-content-body min-w-0 max-w-full overflow-hidden break-words px-1 py-1">
+              ${parsedContent}
+            </div>
+            <div class="ai-speech-container"></div>
+            ${usageBadge}
+          </div>
+        `;
+
+        if (msg.speech_explanation) {
+          const speechContainer = wrapper.querySelector('.ai-speech-container');
+          if (speechContainer) {
+            speechContainer.appendChild(createSpeechPlayerElement(msg.speech_explanation));
+          }
+        }
+      } else if (msg.type === 'thinking') {
+        wrapper.innerHTML = `
+          <div class="mb-3 w-full min-w-0 max-w-full">
+            <div class="bg-dark-surface/40 border border-dark-border/60 rounded-xl px-3.5 py-2 text-xs font-mono min-w-0 max-w-full overflow-hidden">
+              <details class="group">
+                <summary class="flex items-center justify-between cursor-pointer text-txt-subtle hover:text-txt-muted select-none">
+                  <span class="text-[11px] font-sans font-medium text-txt-subtle">Thought Process</span>
+                  <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-180 text-txt-subtle shrink-0 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </summary>
+                <div class="mt-2 pt-2 border-t border-dark-border/40 text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px] break-words overflow-x-auto">${escapeHtml(msg.content)}</div>
+              </details>
+            </div>
+          </div>
+        `;
+      } else if (msg.type === 'tool' || msg.type === 'tool_result') {
+        renderToolCallNode(msg);
+        return;
+      }
+
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    function renderToolCallNode(tool) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto min-w-0 my-2';
+
+      const toolName = tool.name || tool.tool_name || 'Tool';
+      const inputObj = tool.input || tool.args || null;
+      const inputCmd = inputObj?.command ? `$ ${inputObj.command}` : '';
+      const inputFilePath = inputObj?.file_path || inputObj?.path || '';
+      const inputPattern = inputObj?.pattern || inputObj?.query || '';
+      const inputDesc = inputObj?.description || inputCmd || inputFilePath || inputPattern || '';
+      const rawOutput = tool.content ?? tool.output ?? tool.result ?? '';
+      const outputText = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput, null, 2);
+
+      wrapper.innerHTML = `
+        <div class="bg-dark-surface/90 hover:bg-dark-surface border border-dark-border/80 hover:border-brand/40 rounded-xl overflow-hidden shadow-sm transition-all min-w-0 max-w-full">
+          <details class="group">
+            <summary class="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none bg-dark-elevated/40 hover:bg-dark-elevated/80 transition-colors min-w-0">
+              <div class="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden pr-2">
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <span class="font-mono text-[11px] font-semibold text-txt-main px-1.5 py-0.5 rounded bg-dark-elevated border border-dark-border">${escapeHtml(toolName)}</span>
+                </div>
+                <span class="font-mono text-xs text-txt-muted truncate block min-w-0 flex-1">
+                  ${inputCmd ? escapeHtml(inputCmd) : (inputDesc ? escapeHtml(inputDesc) : 'Executed tool')}
+                </span>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0 ml-1">
+                <span class="text-[10px] font-mono text-txt-subtle group-open:hidden hidden sm:inline">View output</span>
+                <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-180 text-txt-subtle shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </div>
+            </summary>
+            <div class="border-t border-dark-border/60 bg-[#0a0b0e] p-3 text-xs font-mono space-y-2.5 overflow-hidden">
+              ${inputObj && Object.keys(inputObj).length > 0 ? `
+                <div class="min-w-0 max-w-full overflow-hidden">
+                  <div class="text-[10px] text-txt-subtle uppercase tracking-wider mb-1 font-mono">Input Parameters</div>
+                  <pre class="text-[11px] text-emerald-400/90 overflow-x-auto bg-dark-surface/80 p-2.5 rounded-lg border border-dark-border/60 leading-relaxed max-h-40 max-w-full whitespace-pre-wrap break-all">${escapeHtml(formatJson(inputObj))}</pre>
+                </div>
+              ` : ''}
+              ${outputText ? `
+                <div class="min-w-0 max-w-full overflow-hidden">
+                  <div class="text-[10px] text-txt-subtle uppercase tracking-wider mb-1 font-mono">Output</div>
+                  <pre class="text-[11px] text-txt-muted overflow-x-auto bg-dark-surface/80 p-2.5 rounded-lg border border-dark-border/60 leading-relaxed max-h-56 max-w-full whitespace-pre-wrap break-all">${escapeHtml(outputText)}</pre>
+                </div>
+              ` : ''}
+            </div>
+          </details>
+        </div>
+      `;
+
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    function clearToolCalls() {}
+
+    // ============== Speech Explanation TTS Player ==============
+    let currentSpeechId = 0;
+
+    const speechAudioPlayer = {
+      isPlaying: false,
+      activeMessageEl: null,
+      rate: 1.0,
+    };
+
+    function stopSpeechAudio() {
+      currentSpeechId++;
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      speechAudioPlayer.isPlaying = false;
+      speechAudioPlayer.activeMessageEl = null;
+
+      document.querySelectorAll('.speech-play-btn').forEach(btn => {
+        btn.className = 'speech-play-btn flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand hover:bg-brand-hover text-white text-xs font-medium transition-colors shadow-sm shrink-0';
+        btn.innerHTML = `<svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><span class="speech-btn-label">Listen Explanation</span>`;
+      });
+      document.querySelectorAll('.speech-status').forEach(s => s.textContent = '');
+    }
+
+    function playSpeechExplanation(text, container) {
+      if (!('speechSynthesis' in window) || !text) return;
+
+      const playBtn = container.querySelector('.speech-play-btn');
+      const statusText = container.querySelector('.speech-status');
+
+      if (speechAudioPlayer.isPlaying && speechAudioPlayer.activeMessageEl === container) {
+        stopSpeechAudio();
+        return;
+      }
+
+      stopSpeechAudio();
+      currentSpeechId++;
+      const speechId = currentSpeechId;
+
+      speechAudioPlayer.isPlaying = true;
+      speechAudioPlayer.activeMessageEl = container;
+
+      if (playBtn) {
+        playBtn.className = 'speech-play-btn flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand text-white text-xs font-medium transition-colors shadow-glow shrink-0';
+        playBtn.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span><span>Playing</span>`;
+      }
+      if (statusText) statusText.textContent = 'Audio playing...';
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = speechAudioPlayer.rate;
+
+      utterance.onend = () => {
+        if (speechId !== currentSpeechId) return;
+        stopSpeechAudio();
+      };
+
+      utterance.onerror = (e) => {
+        if (speechId !== currentSpeechId) return;
+        if (e.error === 'canceled' || e.error === 'interrupted') return;
+        stopSpeechAudio();
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function createSpeechPlayerElement(speechText) {
+      const container = document.createElement('div');
+      container.className = 'mt-2.5 w-full';
+      container.innerHTML = `
+        <div class="speech-player-widget p-2 rounded-xl bg-dark-elevated/60 border border-dark-border/60 flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <button type="button" class="speech-play-btn flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand hover:bg-brand-hover text-white text-xs font-medium transition-colors shadow-sm shrink-0">
+              <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              <span class="speech-btn-label">Listen Explanation</span>
+            </button>
+            <span class="speech-status text-[11px] text-txt-subtle font-mono truncate"></span>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button type="button" class="speech-speed-btn px-1.5 py-0.5 rounded-md bg-dark-surface text-txt-subtle hover:text-white font-mono text-[10px] transition-colors" title="Playback speed">${speechAudioPlayer.rate}x</button>
+            <button type="button" class="speech-script-toggle text-[11px] text-txt-subtle hover:text-white px-2 py-0.5 rounded hover:bg-dark-surface transition-colors" title="Toggle transcript">Script</button>
+          </div>
+        </div>
+        <div class="speech-script-view hidden mt-1.5 p-2.5 rounded-xl bg-dark-bg/60 border border-dark-border/40 text-xs text-txt-muted leading-relaxed font-sans">
+          ${escapeHtml(speechText)}
+        </div>
+      `;
+
+      const playBtn = container.querySelector('.speech-play-btn');
+      const speedBtn = container.querySelector('.speech-speed-btn');
+      const scriptToggle = container.querySelector('.speech-script-toggle');
+      const scriptView = container.querySelector('.speech-script-view');
+
+      playBtn?.addEventListener('click', () => {
+        playSpeechExplanation(speechText, container);
+      });
+
+      speedBtn?.addEventListener('click', () => {
+        const speeds = [1.0, 1.25, 1.5, 2.0];
+        const nextSpeed = speeds[(speeds.indexOf(speechAudioPlayer.rate) + 1) % speeds.length];
+        speechAudioPlayer.rate = nextSpeed;
+        document.querySelectorAll('.speech-speed-btn').forEach(b => b.textContent = `${nextSpeed}x`);
+        if (speechAudioPlayer.isPlaying && speechAudioPlayer.activeMessageEl === container) {
+          playSpeechExplanation(speechText, container);
+        }
+      });
+
+      scriptToggle?.addEventListener('click', () => {
+        scriptView?.classList.toggle('hidden');
+      });
+
+      return container;
+    }
+
+    // Persistent Loading Bar State Control
+    let activeLoadingNode = null;
+
+    function showLoadingIndicator() {
+      if (activeLoadingNode) return;
+
+      activeLoadingNode = document.createElement('div');
+      activeLoadingNode.id = 'active-loader';
+      activeLoadingNode.className = 'animate-msg flex items-center gap-3 mb-4 w-full max-w-3xl lg:max-w-4xl mx-auto';
+      activeLoadingNode.innerHTML = `
+        <div class="w-7 h-7 rounded-lg bg-brand/20 border border-brand-border flex items-center justify-center shrink-0 text-brand">
+          <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </div>
+        <div class="bg-dark-surface border border-dark-border rounded-xl px-4 py-2.5 flex items-center gap-2">
+          <span class="flex gap-1 items-center">
+            <span class="w-1.5 h-1.5 rounded-full bg-brand pulse-dot"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-brand pulse-dot"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-brand pulse-dot"></span>
+          </span>
+          <span class="text-xs text-txt-muted font-medium">Agent is processing...</span>
+        </div>
+      `;
+      el.messagesContainer.appendChild(activeLoadingNode);
+      scrollToBottom();
+    }
+
+    function hideLoadingIndicator() {
+      if (activeLoadingNode) {
+        activeLoadingNode.remove();
+        activeLoadingNode = null;
+      }
+    }
+
+    function showError(message) {
+      hideLoadingIndicator();
+      const wrapper = document.createElement('div');
+      wrapper.className = 'animate-msg flex justify-start mb-4 w-full max-w-3xl lg:max-w-4xl mx-auto';
+      wrapper.innerHTML = `
+        <div class="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 max-w-[85%] text-xs text-red-400">
+          <span class="font-semibold block mb-1">Execution Error</span>
+          ${escapeHtml(message)}
+        </div>
+      `;
+      el.messagesContainer.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    // ============== Utilities ==============
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function formatJson(val) {
+      if (typeof val === 'object') return JSON.stringify(val, null, 2);
+      try {
+        return JSON.stringify(JSON.parse(val), null, 2);
+      } catch {
+        return String(val);
+      }
+    }
+
+    let _scrollRafPending = false;
+    let _userScrolledUp = false;
+
+    function scrollToBottom(force = false) {
+      if (!force && _userScrolledUp) return;
+      if (_scrollRafPending) return;
+      _scrollRafPending = true;
+      requestAnimationFrame(() => {
+        el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+        _scrollRafPending = false;
+      });
+    }
+
+    function updateSessionTokensWidget() {
+      // Legacy — tokens now shown via context bar
+    }
+
+    function renderCurrentSessionView(threadId = state.currentThreadId) {
+      if (!threadId) return;
+      stopSpeechAudio();
+      el.messagesContainer.innerHTML = '';
+      clearToolCalls();
+
+      const messages = state.messages[threadId] || [];
+      const cleanMessages = messages.filter(m => {
+        if (typeof m.content !== 'string') return true;
+        if (m.content.startsWith('Stop hook feedback:')) return false;
+        if (m.content.startsWith('[structured-output-enforce]')) return false;
+        if (m.content.includes('You MUST call the StructuredOutput tool')) return false;
+        return true;
+      });
+      const regularMessages = cleanMessages.filter(m => m.type !== 'tool_result');
+
+      if (regularMessages.length === 0) {
+        el.emptyState.style.display = 'flex';
+        el.messagesContainer.appendChild(el.emptyState);
+        return;
+      }
+
+      el.emptyState.style.display = 'none';
+      for (const msg of cleanMessages) {
+        renderMessageNode(msg);
+      }
+    }
+
+    async function selectSession(threadId) {
+      if (window.innerWidth < 1024) {
+        el.sidebar?.classList.add('-translate-x-full');
+        el.sidebarBackdrop?.classList.add('hidden');
+      }
+      stopSpeechAudio();
+      setCurrentThread(threadId);
+      renderProjects();
+      state.contextUsage = null;
+      updateContextBar(null);
+
+      state.isSelectingSession = true;
+      el.messagesContainer.innerHTML = `
+        <div class="h-full flex flex-col items-center justify-center text-center my-auto py-16 w-full animate-msg">
+          <div class="w-10 h-10 rounded-2xl bg-dark-elevated border border-dark-border flex items-center justify-center mb-3 text-brand shadow-sm">
+            <svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          <span class="text-xs text-txt-muted font-medium">Loading conversation...</span>
+        </div>
+      `;
+
+      try {
+        const projectParam = state.activeProjectId ? `&project_id=${state.activeProjectId}` : '';
+        const res = await fetch(`/api/sessions/${threadId}/messages?limit=50${projectParam}`);
+        hideLoadingIndicator();
+
+        if (res.ok) {
+          const data = await res.json();
+          state.messages[threadId] = data.messages || [];
+          state.sessionCursors[threadId] = data.next_cursor !== undefined ? data.next_cursor : null;
+
+          renderCurrentSessionView(threadId);
+          el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+          requestAnimationFrame(() => {
+            el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight;
+            setTimeout(() => {
+              state.isSelectingSession = false;
+            }, 150);
+          });
+        } else {
+          state.isSelectingSession = false;
+        }
+      } catch (e) {
+        state.isSelectingSession = false;
+        hideLoadingIndicator();
+        showError('Failed to load session messages from server.');
+      }
+      updateSessionTokensWidget();
+    }
+
+    async function loadOlderMessages(threadId = state.currentThreadId) {
+      if (!threadId || state.isLoadingOlder[threadId] || !state.sessionCursors[threadId]) return;
+
+      const cursor = state.sessionCursors[threadId];
+      state.isLoadingOlder[threadId] = true;
+
+      // Show top loading indicator
+      let topLoader = document.getElementById('loading-older-messages');
+      if (!topLoader) {
+        topLoader = document.createElement('div');
+        topLoader.id = 'loading-older-messages';
+        topLoader.className = 'w-full flex items-center justify-center py-2 text-txt-subtle text-xs gap-2 shrink-0';
+        topLoader.innerHTML = `
+          <svg class="w-3.5 h-3.5 animate-spin text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span>Loading older messages...</span>
+        `;
+        el.messagesContainer.prepend(topLoader);
+      }
+
+      try {
+        const projectParam = state.activeProjectId ? `&project_id=${state.activeProjectId}` : '';
+        const res = await fetch(`/api/sessions/${threadId}/messages?limit=50&cursor=${cursor}${projectParam}`);
+
+        if (res.ok) {
+          const data = await res.json();
+          const newMessages = data.messages || [];
+          state.sessionCursors[threadId] = data.next_cursor !== undefined ? data.next_cursor : null;
+
+          if (newMessages.length > 0) {
+            const prevScrollHeight = el.messagesContainer.scrollHeight;
+            const prevScrollTop = el.messagesContainer.scrollTop;
+
+            state.messages[threadId] = [...newMessages, ...(state.messages[threadId] || [])];
+
+            renderCurrentSessionView(threadId);
+
+            // Restore scroll position smoothly
+            requestAnimationFrame(() => {
+              el.messagesContainer.scrollTop = el.messagesContainer.scrollHeight - prevScrollHeight + prevScrollTop;
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load older messages:', e);
+      } finally {
+        state.isLoadingOlder[threadId] = false;
+        document.getElementById('loading-older-messages')?.remove();
+      }
+    }
+
+    function startNewChat() {
+      if (window.innerWidth < 1024) {
+        el.sidebar?.classList.add('-translate-x-full');
+        el.sidebarBackdrop?.classList.add('hidden');
+      }
+      stopSpeechAudio();
+      // Abort any in-progress stream
+      if (state.abortController) {
+        state.abortController.abort();
+        state.abortController = null;
+        state.isStreaming = false;
+      }
+      clearToolCalls();
+      state.contextUsage = null;
+      updateContextBar(null);
+      setCurrentThread(null);
+      renderProjects();
+      el.messagesContainer.innerHTML = '';
+      el.messagesContainer.appendChild(el.emptyState);
+      el.emptyState.style.display = 'flex';
+      updateSessionTokensWidget();
+      el.messageInput.focus();
+    }
+
+    async function deleteSession(threadId, projectId) {
+      stopSpeechAudio();
+      try {
+        await fetch(`/api/sessions/${threadId}`, { method: 'DELETE' });
+      } catch (e) {}
+
+      if (projectId && state.projectSessions[projectId]) {
+        state.projectSessions[projectId] = state.projectSessions[projectId].filter(s => s.thread_id !== threadId);
+      }
+      delete state.messages[threadId];
+
+      if (state.currentThreadId === threadId) {
+        startNewChat();
+      } else {
+        renderProjects();
+      }
+    }
+
+    async function sendMessage(overrideText = null) {
+      const text = (overrideText || el.messageInput.value).trim();
+      if (!text || state.isStreaming) return;
+
+      el.messageInput.value = '';
+      el.messageInput.style.height = 'auto';
+      state.isStreaming = true;
+      updateSendButtonUI();
+
+      // Hide empty screen
+      el.emptyState.style.display = 'none';
+
+      // Ensure thread ID
+      const isNewSession = !state.currentThreadId;
+      if (!state.currentThreadId) {
+        state.currentThreadId = `session-${Date.now().toString(36)}`;
+      }
+
+      // Add user message node
+      const userMsg = { type: 'human', content: text };
+      renderMessageNode(userMsg);
+      if (!state.messages[state.currentThreadId]) {
+        state.messages[state.currentThreadId] = [];
+      }
+      state.messages[state.currentThreadId].push(userMsg);
+
+      // Show loader
+      showLoadingIndicator();
+
+      // Create AbortController for cancellation support
+      state.abortController = new AbortController();
+
+      try {
+        let activeAiWrapper = null;
+        let activeAiTextEl = null;
+        let activeThinkingTextEl = null;
+
+        for await (const { event, data } of streamChat(text, state.currentThreadId, state.abortController.signal)) {
+          if (event === 'message') {
+            if (data.type === 'human') continue;
+            if (data.type === 'context_usage') {
+              state.contextUsage = data.data;
+              updateContextBar(data.data);
+              continue;
+            }
+
+            if (data.type === 'speech_explanation') {
+              if (activeAiWrapper && data.content) {
+                activeAiWrapper._speechExplanation = data.content;
+                const speechContainer = activeAiWrapper.querySelector('.ai-speech-container');
+                if (speechContainer) {
+                  speechContainer.innerHTML = '';
+                  speechContainer.appendChild(createSpeechPlayerElement(data.content));
+                  scrollToBottom();
+                }
+              }
+              continue;
+            }
+
+            hideLoadingIndicator();
+
+            if (data.type === 'text_delta') {
+              if (!activeAiWrapper) {
+                activeAiWrapper = document.createElement('div');
+                activeAiWrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto mb-4 min-w-0';
+                activeAiWrapper.innerHTML = `
+                  <div class="mb-4 w-full min-w-0 max-w-full">
+                    <div class="prose-dark ai-content-body min-w-0 max-w-full overflow-hidden break-words px-1 py-1"></div>
+                    <div class="ai-speech-container"></div>
+                  </div>
+                `;
+                activeAiTextEl = activeAiWrapper.querySelector('.ai-content-body');
+                activeAiTextEl.dataset.raw = '';
+                el.messagesContainer.appendChild(activeAiWrapper);
+              }
+
+              activeAiTextEl.dataset.raw += data.content;
+              // Debounce markdown re-rendering with requestAnimationFrame
+              if (!activeAiTextEl._rafPending) {
+                activeAiTextEl._rafPending = true;
+                requestAnimationFrame(() => {
+                  activeAiTextEl.innerHTML = marked.parse(activeAiTextEl.dataset.raw);
+                  activeAiTextEl._rafPending = false;
+                  scrollToBottom();
+                });
+              }
+            }
+            else if (data.type === 'thinking_delta') {
+              if (!activeThinkingTextEl) {
+                const thinkWrapper = document.createElement('div');
+                thinkWrapper.className = 'animate-msg w-full max-w-3xl lg:max-w-4xl mx-auto mb-3 min-w-0';
+                thinkWrapper.innerHTML = `
+                  <div class="bg-dark-surface/40 border border-dark-border/60 rounded-xl px-3.5 py-2 text-xs font-mono min-w-0 max-w-full overflow-hidden">
+                    <details class="group" open>
+                      <summary class="flex items-center justify-between cursor-pointer text-txt-subtle hover:text-txt-muted select-none">
+                        <span class="text-[11px] font-sans font-medium text-txt-subtle">Thought Process</span>
+                        <svg class="w-3.5 h-3.5 transition-transform group-open:rotate-180 text-txt-subtle shrink-0 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                      </summary>
+                      <div class="thinking-body mt-2 pt-2 border-t border-dark-border/40 text-txt-muted whitespace-pre-wrap leading-relaxed text-[11px] break-words overflow-x-auto"></div>
+                    </details>
+                  </div>
+                `;
+                activeThinkingTextEl = thinkWrapper.querySelector('.thinking-body');
+                el.messagesContainer.appendChild(thinkWrapper);
+              }
+              activeThinkingTextEl.textContent += data.content;
+              scrollToBottom();
+            }
+            else if (data.type === 'tool_result') {
+              activeAiWrapper = null;
+              activeAiTextEl = null;
+              activeThinkingTextEl = null;
+              const toolItem = {
+                type: 'tool',
+                name: data.tool_name || data.name || 'Tool',
+                tool_name: data.tool_name || data.name || 'Tool',
+                tool_id: data.tool_id || data.id,
+                input: data.args || data.input || {},
+                args: data.args || data.input || {},
+                content: data.content ?? data.output ?? data.result ?? '',
+              };
+              if (!state.messages[state.currentThreadId]) {
+                state.messages[state.currentThreadId] = [];
+              }
+              state.messages[state.currentThreadId].push(toolItem);
+              renderToolCallNode(toolItem);
+              showLoadingIndicator();
+            }
+            else if (data.type === 'tool_result_content') {
+              if (state.messages[state.currentThreadId]) {
+                const list = state.messages[state.currentThreadId];
+                for (let i = list.length - 1; i >= 0; i--) {
+                  if (list[i].type === 'tool' || list[i].type === 'tool_result') {
+                    list[i].content = data.content;
+                    break;
+                  }
+                }
+              }
+            }
+            else {
+              activeAiWrapper = null;
+              activeAiTextEl = null;
+              activeThinkingTextEl = null;
+              renderMessageNode(data);
+              showLoadingIndicator();
+            }
+          } else if (event === 'done') {
+            hideLoadingIndicator();
+            const threadChanged = data.thread_id && data.thread_id !== state.currentThreadId;
+            if (threadChanged) {
+              setCurrentThread(data.thread_id);
+            }
+            if (activeAiTextEl && activeAiTextEl.dataset.raw) {
+              if (data.usage) {
+                const usageBadge = document.createElement('div');
+                usageBadge.className = 'mt-3 pt-2 border-t border-dark-border/60 flex items-center gap-3 font-mono text-[10px] text-txt-subtle';
+                usageBadge.innerHTML = `
+                  <span title="Input tokens">in: <strong class="text-txt-muted">${data.usage.input_tokens || 0}</strong></span>
+                  <span title="Output tokens">out: <strong class="text-txt-muted">${data.usage.output_tokens || 0}</strong></span>
+                  <span title="Total tokens">total: <strong class="text-brand">${data.usage.total_tokens || 0}</strong></span>
+                `;
+                activeAiTextEl.appendChild(usageBadge);
+              }
+
+              if (!state.messages[state.currentThreadId]) {
+                state.messages[state.currentThreadId] = [];
+              }
+              state.messages[state.currentThreadId].push({
+                type: 'ai',
+                content: activeAiTextEl.dataset.raw,
+                speech_explanation: activeAiWrapper?._speechExplanation || null,
+                usage: data.usage || null,
+              });
+              updateSessionTokensWidget();
+            }
+
+            if (isNewSession || threadChanged) {
+              if (state.activeProjectId) {
+                await loadProjectSessions(state.activeProjectId);
+                renderProjects();
+              }
+            }
+          } else if (event === 'error') {
+            showError(data.message || 'Stream processing failed');
+          }
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          showError(err.message || 'Failed to communicate with agent server');
+        }
+      } finally {
+        hideLoadingIndicator();
+        state.isStreaming = false;
+        state.abortController = null;
+        updateSendButtonUI();
+        el.messageInput.focus();
+      }
+    }
+
+    function updateSendButtonUI() {
+      if (!el.sendBtn) return;
+      if (state.isStreaming) {
+        el.sendBtn.disabled = false;
+        el.sendBtn.title = 'Stop generation';
+        el.sendBtn.className = 'bg-rose-500 hover:bg-rose-600 text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 shadow-glow active:scale-95 shrink-0';
+        el.sendBtn.innerHTML = `
+          <svg class="w-3 h-3 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+            <rect x="6" y="6" width="12" height="12" rx="2"/>
+          </svg>
+        `;
+      } else {
+        const hasText = el.messageInput.value.trim().length > 0;
+        el.sendBtn.disabled = !hasText;
+        el.sendBtn.title = 'Send message';
+        el.sendBtn.className = 'bg-brand hover:bg-brand-hover text-white h-7 w-7 sm:h-7.5 sm:w-7.5 rounded-lg flex items-center justify-center transition-all duration-150 disabled:opacity-25 disabled:hover:bg-brand shadow-sm active:scale-95 shrink-0';
+        el.sendBtn.innerHTML = `
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+          </svg>
+        `;
+      }
+    }
+
+    // ============== Notifications ==============
+    function showNotification(message, type = 'info') {
+      const notification = document.createElement('div');
+      const colors = {
+        success: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+        error: 'bg-red-500/10 text-red-400 border-red-500/30',
+        info: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+      };
+      notification.className = `fixed bottom-4 right-4 z-50 px-4 py-2 rounded-lg text-xs font-mono border ${colors[type] || colors.info} shadow-lg animate-msg`;
+      notification.textContent = message;
+      document.body.appendChild(notification);
+      setTimeout(() => {
+        notification.style.opacity = '0';
+        notification.style.transition = 'opacity 0.3s';
+        setTimeout(() => notification.remove(), 300);
+      }, 3000);
+    }
+
+    // ============== Listeners ==============
+    el.sendBtn.addEventListener('click', () => {
+      if (state.isStreaming) {
+        state.abortController?.abort();
+      } else {
+        sendMessage();
+      }
+    });
+
+    el.quickVoiceBtn?.addEventListener('click', () => {
+      state.speechExplanation = !state.speechExplanation;
+      localStorage.setItem('qa-speech-explanation', String(state.speechExplanation));
+      updateQuickVoiceUI();
+      showNotification(state.speechExplanation ? 'Speech Explanation voice mode enabled' : 'Speech Explanation voice mode disabled', 'info');
+    });
+
+    function isMobileView() {
+      return window.innerWidth < 768 || window.matchMedia('(pointer: coarse)').matches || ('ontouchstart' in window);
+    }
+
+    el.messageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // On phone/mobile, Enter inserts a new line; only tapping the Send button sends the message
+        if (isMobileView()) {
+          return;
+        }
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    el.messageInput.addEventListener('input', () => {
+      // Auto expand textarea height
+      el.messageInput.style.height = 'auto';
+      el.messageInput.style.height = Math.min(el.messageInput.scrollHeight, 192) + 'px';
+
+      updateSendButtonUI();
+    });
+
+    el.messagesContainer?.addEventListener('scroll', () => {
+      const distanceFromBottom = el.messagesContainer.scrollHeight - el.messagesContainer.scrollTop - el.messagesContainer.clientHeight;
+      _userScrolledUp = distanceFromBottom > 120;
+
+      if (
+        !state.isSelectingSession &&
+        el.messagesContainer.scrollTop <= 60 &&
+        el.messagesContainer.scrollHeight > el.messagesContainer.clientHeight + 100 &&
+        state.currentThreadId &&
+        state.sessionCursors[state.currentThreadId] &&
+        !state.isLoadingOlder[state.currentThreadId]
+      ) {
+        loadOlderMessages(state.currentThreadId);
+      }
+    });
+
+    el.expandAllBtn?.addEventListener('click', expandAllProjects);
+    el.collapseAllBtn?.addEventListener('click', collapseAllProjects);
+
+    el.addProjectBtn?.addEventListener('click', () => {
+      el.addProjectForm?.classList.toggle('hidden');
+      if (!el.addProjectForm?.classList.contains('hidden')) {
+        el.newProjectPathInput?.focus();
+      }
+    });
+
+    el.cancelAddProjectBtn?.addEventListener('click', () => {
+      el.addProjectForm?.classList.add('hidden');
+      if (el.newProjectPathInput) el.newProjectPathInput.value = '';
+      if (el.newProjectNameInput) el.newProjectNameInput.value = '';
+    });
+
+    const handleAddProjectSubmit = async () => {
+      const path = el.newProjectPathInput?.value;
+      const name = el.newProjectNameInput?.value;
+      const success = await addNewProject(name, path);
+      if (success) {
+        el.addProjectForm?.classList.add('hidden');
+        if (el.newProjectPathInput) el.newProjectPathInput.value = '';
+        if (el.newProjectNameInput) el.newProjectNameInput.value = '';
+      }
+    };
+
+    el.submitAddProjectBtn?.addEventListener('click', handleAddProjectSubmit);
+    el.newProjectPathInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleAddProjectSubmit();
+    });
+    el.newProjectNameInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleAddProjectSubmit();
+    });
+
+    el.settingsBtn?.addEventListener('click', showSettingsModal);
+
+    // ============== Settings Modal ==============
+    function showSettingsModal() {
+      const existing = document.getElementById('settings-modal');
+      if (existing) existing.remove();
+
+      const modal = document.createElement('div');
+      modal.id = 'settings-modal';
+      modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-msg p-4';
+      
+      const currentSources = state.settingSources ? (state.settingSources.includes('user') ? 'user' : (state.settingSources.includes('local') ? 'local' : 'default')) : 'default';
+      const currentPerm = state.permissionMode || 'default';
+      const currentSkillsMode = state.skillsMode || 'default';
+
+      modal.innerHTML = `
+        <div class="bg-dark-surface border border-dark-border rounded-2xl p-5 w-full max-w-lg shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+          <!-- Header -->
+          <div class="flex items-center justify-between pb-3 border-b border-dark-border/60">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+              </svg>
+              <h3 class="font-medium text-sm text-white">Agent & Session Settings</h3>
+            </div>
+            <button id="close-settings-btn" class="text-txt-subtle hover:text-white p-1 rounded-lg hover:bg-dark-elevated transition-colors text-base leading-none">&times;</button>
+          </div>
+
+          <div class="space-y-3.5 py-1">
+            
+            <!-- 1. Permission Mode -->
+            <div class="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-xs font-medium text-white">Permission Mode</div>
+                  <div class="text-[11px] text-txt-subtle">Controls what the agent is allowed to do</div>
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[11px] font-medium">
+                <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'default' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="default">Default</button>
+                <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'read_only' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="read_only">Read-Only</button>
+                <button type="button" class="perm-option py-1 rounded transition-colors text-center ${currentPerm === 'bypassPermissions' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="bypassPermissions">Full Access</button>
+              </div>
+              <div id="perm-desc" class="text-[10px] text-txt-subtle font-mono"></div>
+            </div>
+
+            <!-- 2. Settings Sources -->
+            <div class="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-xs font-medium text-white">Settings Sources</div>
+                  <div class="text-[11px] text-txt-subtle">Choose which Claude config files to load</div>
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[11px] font-medium">
+                <button type="button" class="source-option py-1 rounded transition-colors text-center ${currentSources === 'default' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="default">Default (All)</button>
+                <button type="button" class="source-option py-1 rounded transition-colors text-center ${currentSources === 'user' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="user">User (~/.claude)</button>
+                <button type="button" class="source-option py-1 rounded transition-colors text-center ${currentSources === 'local' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-val="local">Local (.claude)</button>
+              </div>
+              <div id="source-desc" class="text-[10px] text-txt-subtle font-mono"></div>
+            </div>
+
+            <!-- 3. Skills Configurations -->
+            <div class="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-xs font-medium text-white">Skills Configuration</div>
+                  <div class="text-[11px] text-txt-subtle">Controls which skills are available in the session</div>
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[10px] sm:text-[11px] font-medium">
+                <button type="button" class="skills-mode-btn py-1 rounded transition-colors text-center ${currentSkillsMode === 'default' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-mode="default">Default</button>
+                <button type="button" class="skills-mode-btn py-1 rounded transition-colors text-center ${currentSkillsMode === 'none' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-mode="none">No Skills</button>
+                <button type="button" class="skills-mode-btn py-1 rounded transition-colors text-center ${currentSkillsMode === 'custom' ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}" data-mode="custom">Custom</button>
+              </div>
+
+              <!-- Custom Skills Tag Input Container (shown when mode === 'custom') -->
+              <div id="custom-skills-container" class="space-y-2 pt-1 ${currentSkillsMode === 'custom' ? '' : 'hidden'}">
+                <div class="flex items-center gap-1.5">
+                  <input id="new-skill-input" type="text" placeholder="e.g. writing-plans, agent-reach..." class="flex-1 bg-dark-bg border border-dark-border rounded-lg px-2.5 py-1 text-xs text-white placeholder-txt-subtle focus:outline-none focus:border-brand/60 font-mono" />
+                  <button id="add-skill-btn" type="button" class="px-2.5 py-1 bg-brand hover:bg-brand-hover text-white rounded-lg text-xs font-medium transition-colors">Add</button>
+                </div>
+                <div id="skills-tags-list" class="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 bg-dark-bg/60 rounded-lg border border-dark-border/40 min-h-[32px]"></div>
+              </div>
+              <div id="skills-desc" class="text-[10px] text-txt-subtle font-mono"></div>
+            </div>
+
+            <!-- 4. Speech Explanation Toggle -->
+            <div class="flex items-center justify-between p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60">
+              <div class="space-y-0.5 pr-4">
+                <div class="text-xs font-medium text-white">Speech Explanation</div>
+                <div class="text-[11px] text-txt-subtle leading-relaxed">Enable spoken voice explanations for AI responses.</div>
+              </div>
+              <button id="modal-speech-toggle" type="button" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${state.speechExplanation ? 'bg-brand' : 'bg-dark-border'}">
+                <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${state.speechExplanation ? 'translate-x-4' : 'translate-x-0'}"></span>
+              </button>
+            </div>
+
+          </div>
+
+          <div class="pt-2 flex justify-end">
+            <button id="done-settings-btn" class="px-4 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-white text-xs font-medium transition-colors shadow-sm">Done</button>
+          </div>
+        </div>
+      `;
+
+      modal.querySelector('#close-settings-btn')?.addEventListener('click', () => modal.remove());
+      modal.querySelector('#done-settings-btn')?.addEventListener('click', () => modal.remove());
+      modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+      // Permission Mode logic
+      const permDescEl = modal.querySelector('#perm-desc');
+      const updatePermDesc = () => {
+        const val = state.permissionMode;
+        if (!val) permDescEl.textContent = 'null (SDK Default: Standard tool permission checks)';
+        else if (val === 'read_only') permDescEl.textContent = '"read_only" (Read-only: Read, Glob, Grep only)';
+        else if (val === 'bypassPermissions') permDescEl.textContent = '"bypassPermissions" (Full Access: All tool checks bypassed)';
+      };
+      updatePermDesc();
+
+      modal.querySelectorAll('.perm-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.val;
+          state.permissionMode = val === 'default' ? null : val;
+          if (state.permissionMode) {
+            localStorage.setItem('qa-permission-mode', state.permissionMode);
+          } else {
+            localStorage.removeItem('qa-permission-mode');
+          }
+          modal.querySelectorAll('.perm-option').forEach(b => {
+            b.className = `perm-option py-1 rounded transition-colors text-center ${b.dataset.val === (state.permissionMode || 'default') ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}`;
+          });
+          updatePermDesc();
+        });
+      });
+
+      // Settings Sources logic
+      const sourceDescEl = modal.querySelector('#source-desc');
+      const updateSourceDesc = () => {
+        const s = state.settingSources;
+        if (!s) sourceDescEl.textContent = 'null (Loads user + project + local settings — SDK default)';
+        else if (s.includes('user')) sourceDescEl.textContent = '["user"] (Only load ~/.claude/settings.json)';
+        else if (s.includes('local')) sourceDescEl.textContent = '["local"] (Only load .claude/settings.local.json)';
+      };
+      updateSourceDesc();
+
+      modal.querySelectorAll('.source-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.val;
+          if (val === 'default') {
+            state.settingSources = null;
+            localStorage.removeItem('qa-setting-sources');
+          } else if (val === 'user') {
+            state.settingSources = ['user'];
+            localStorage.setItem('qa-setting-sources', 'user');
+          } else if (val === 'local') {
+            state.settingSources = ['local'];
+            localStorage.setItem('qa-setting-sources', 'local');
+          }
+          const curVal = state.settingSources ? (state.settingSources.includes('user') ? 'user' : 'local') : 'default';
+          modal.querySelectorAll('.source-option').forEach(b => {
+            b.className = `source-option py-1 rounded transition-colors text-center ${b.dataset.val === curVal ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}`;
+          });
+          updateSourceDesc();
+        });
+      });
+
+      // Skills Configuration logic
+      const skillsContainer = modal.querySelector('#custom-skills-container');
+      const tagsList = modal.querySelector('#skills-tags-list');
+      const skillInput = modal.querySelector('#new-skill-input');
+      const addSkillBtn = modal.querySelector('#add-skill-btn');
+      const skillsDescEl = modal.querySelector('#skills-desc');
+
+      const renderSkillsTags = () => {
+        if (!tagsList) return;
+        tagsList.innerHTML = '';
+        const list = state.skillsList || [];
+        if (list.length === 0) {
+          tagsList.innerHTML = '<span class="text-[11px] text-txt-subtle italic p-1">No custom skills added (sends empty list [])</span>';
+          return;
+        }
+        list.forEach((skillName, idx) => {
+          const tag = document.createElement('span');
+          tag.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-dark-surface border border-dark-border text-white text-[11px] font-mono shadow-sm';
+          tag.innerHTML = `
+            <span>${escapeHtml(skillName)}</span>
+            <button type="button" class="text-txt-subtle hover:text-red-400 font-sans ml-0.5 leading-none" data-idx="${idx}">&times;</button>
+          `;
+          tag.querySelector('button')?.addEventListener('click', () => {
+            state.skillsList.splice(idx, 1);
+            localStorage.setItem('qa-skills-list', JSON.stringify(state.skillsList));
+            renderSkillsTags();
+            updateSkillsDesc();
+          });
+          tagsList.appendChild(tag);
+        });
+      };
+
+      const updateSkillsDesc = () => {
+        if (!skillsDescEl) return;
+        const mode = state.skillsMode || 'default';
+        if (mode === 'default') skillsDescEl.textContent = 'null (SDK default: standard CLI discovery)';
+        else if (mode === 'none') skillsDescEl.textContent = '[] (No skills at all: empty list)';
+        else if (mode === 'custom') {
+          const count = (state.skillsList || []).length;
+          skillsDescEl.textContent = `[${(state.skillsList || []).map(s => `"${s}"`).join(', ')}] (${count} skills enabled)`;
+        }
+      };
+
+      const addCustomSkill = () => {
+        const val = skillInput?.value.trim();
+        if (!val) return;
+        if (!state.skillsList) state.skillsList = [];
+        if (!state.skillsList.includes(val)) {
+          state.skillsList.push(val);
+          localStorage.setItem('qa-skills-list', JSON.stringify(state.skillsList));
+          renderSkillsTags();
+          updateSkillsDesc();
+        }
+        if (skillInput) skillInput.value = '';
+      };
+
+      addSkillBtn?.addEventListener('click', addCustomSkill);
+      skillInput?.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addCustomSkill();
+        }
+      });
+
+      renderSkillsTags();
+      updateSkillsDesc();
+
+      modal.querySelectorAll('.skills-mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.mode;
+          state.skillsMode = mode;
+          localStorage.setItem('qa-skills-mode', mode);
+
+          modal.querySelectorAll('.skills-mode-btn').forEach(b => {
+            b.className = `skills-mode-btn py-1 rounded transition-colors text-center ${b.dataset.mode === mode ? 'bg-brand text-white shadow-sm' : 'text-txt-subtle hover:text-white'}`;
+          });
+
+          if (mode === 'custom') {
+            skillsContainer?.classList.remove('hidden');
+          } else {
+            skillsContainer?.classList.add('hidden');
+          }
+          updateSkillsDesc();
+        });
+      });
+
+      // Speech explanation toggle logic
+      const speechToggle = modal.querySelector('#modal-speech-toggle');
+      speechToggle?.addEventListener('click', () => {
+        state.speechExplanation = !state.speechExplanation;
+        localStorage.setItem('qa-speech-explanation', String(state.speechExplanation));
+        speechToggle.className = `relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${state.speechExplanation ? 'bg-brand' : 'bg-dark-border'}`;
+        const span = speechToggle.querySelector('span');
+        if (span) span.className = `pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${state.speechExplanation ? 'translate-x-4' : 'translate-x-0'}`;
+        updateQuickVoiceUI();
+      });
+
+      document.body.appendChild(modal);
+    }
+
+    function updateQuickVoiceUI() {
+      if (!el.quickVoiceBtn || !el.quickVoiceLabel) return;
+      const isVoiceOn = Boolean(state.speechExplanation);
+      el.quickVoiceBtn.className = `flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-sans transition-all border shrink-0 ${
+        isVoiceOn 
+          ? 'bg-brand/15 text-brand border-brand/40 hover:bg-brand/25 shadow-glow' 
+          : 'bg-dark-elevated/40 text-txt-subtle border-dark-border/40 hover:text-txt-muted'
+      }`;
+      el.quickVoiceLabel.textContent = isVoiceOn ? 'Voice On' : 'Voice Off';
+    }
+
+    // ============== Context Usage ==============
+    function updateContextBar(ctx) {
+      if (!el.contextUsagePill) return;
+      if (!ctx) {
+        el.contextUsagePill.classList.add('hidden');
+        el.contextUsagePill.classList.remove('flex');
+        return;
+      }
+      const pct = ctx.percentage || 0;
+      if (el.contextPillLabel) {
+        el.contextPillLabel.textContent = `${pct}% context`;
+      }
+      if (el.contextPillDot) {
+        if (pct < 60) {
+          el.contextPillDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
+        } else if (pct < 85) {
+          el.contextPillDot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
+        } else {
+          el.contextPillDot.className = 'w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse';
+        }
+      }
+      el.contextUsagePill.classList.remove('hidden');
+      el.contextUsagePill.classList.add('flex');
+    }
+
+    function showContextModal() {
+      const ctx = state.contextUsage;
+      if (!ctx) return;
+      const max = ctx.maxTokens || 180000;
+
+      // Active categories (excluding free/inactive space)
+      const INACTIVE = ['Free space', 'Autocompact buffer'];
+      const activeCats = (ctx.categories || []).filter(c => !INACTIVE.includes(c.name));
+      const inactiveCats = (ctx.categories || []).filter(c => INACTIVE.includes(c.name));
+
+      const totalUsed = activeCats.reduce((s, c) => s + c.tokens, 0);
+      const pct = max > 0 ? Math.round(totalUsed / max * 100) : 0;
+      const totalFree = inactiveCats.reduce((s, c) => s + c.tokens, 0);
+
+      // Build category rows (active only)
+      const catRows = activeCats.map(c =>
+        `<tr><td class="py-1 px-2">${c.name}</td><td class="py-1 px-2 text-right font-mono">${c.tokens.toLocaleString()}</td><td class="py-1 px-2 text-right text-txt-subtle">${max > 0 ? Math.round(c.tokens / max * 100) : 0}%</td></tr>`
+      ).join('');
+
+      const modal = document.createElement('div');
+      modal.id = 'context-modal';
+      modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm';
+      modal.innerHTML = `
+        <div class="bg-dark-elevated border border-dark-border rounded-2xl shadow-2xl w-80 max-h-[80vh] overflow-y-auto">
+          <div class="p-4 border-b border-dark-border flex items-center justify-between">
+            <h3 class="text-sm font-medium text-txt-main">Context Window</h3>
+            <button onclick="this.closest('#context-modal').remove()" class="text-txt-subtle hover:text-txt-main">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="p-4">
+            <div class="text-center mb-4">
+              <div class="text-2xl font-bold text-brand">${totalUsed.toLocaleString()}</div>
+              <div class="text-xs text-txt-subtle">of ${max.toLocaleString()} tokens (${pct}%)</div>
+              <div class="w-full h-2 bg-dark-bg rounded-full mt-2 overflow-hidden border border-dark-border/50">
+                <div class="h-full bg-brand rounded-full" style="width: ${pct}%"></div>
+              </div>
+            </div>
+            <table class="w-full text-xs mb-4">
+              <thead><tr class="text-txt-subtle border-b border-dark-border/50"><th class="text-left py-1 px-2 font-medium">Category</th><th class="text-right py-1 px-2 font-medium">Tokens</th><th class="text-right py-1 px-2 font-medium">%</th></tr></thead>
+              <tbody class="text-txt-main">${catRows}</tbody>
+            </table>
+            <div class="border-t border-dark-border/50 pt-2">
+              <div class="text-xs text-txt-subtle">Free space: <strong class="text-txt-main font-mono">${totalFree.toLocaleString()}</strong> tokens</div>
+            </div>
+          </div>
+        </div>
+      `;
+      modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+      document.body.appendChild(modal);
+    }
+
+    el.menuToggle?.addEventListener('click', () => {
+      el.sidebar?.classList.toggle('-translate-x-full');
+      el.sidebarBackdrop?.classList.toggle('hidden');
+    });
+
+    el.sidebarBackdrop?.addEventListener('click', () => {
+      el.sidebar?.classList.add('-translate-x-full');
+      el.sidebarBackdrop?.classList.add('hidden');
+    });
+
+    document.querySelectorAll('.prompt-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const text = chip.querySelector('.font-medium').textContent;
+        sendMessage(text);
+      });
+    });
+
+    // ============== Initialize ==============
+    async function init() {
+      updateQuickVoiceUI();
+      updateSendButtonUI();
+      await loadProjects();
+
+      if (state.currentThreadId) {
+        await selectSession(state.currentThreadId);
+      } else {
+        startNewChat();
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
+

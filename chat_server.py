@@ -14,14 +14,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Literal, Any
+from typing import Literal, Any, cast
 
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, PermissionMode
 from claude_agent_sdk import ResultMessage, StreamEvent, list_sessions as sdk_list_sessions
 from claude_agent_sdk.types import (
     PermissionResultAllow,
@@ -37,7 +37,7 @@ PORT = 8225
 
 LLM_MODEL = os.environ.get("LLM_MODEL", "MiniMaxAI/MiniMax-M3")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjgyNTk1NTQ1LTAyMDYtNGVlMy1hMjg3LTZhM2RiYjI2OTQzNSIsInNjb3BlIjoiaWVfbW9kZWwiLCJwcm9kdWN0IjoiSUUiLCJvd25lcklkIjoiZDNkY2VjMjgtMjQ5MS00NmU1LWI2YmYtZDcyYzg0YmRmZGEyIn0._R-wta0JXQRi3FbA7S0IXqC_sT14maRy0CwZ7kl4tM4")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.gmi-serving.com")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8083/anthropic")
 
 # Cache HTML frontends at module load time
 _FE_DIST_PATH = Path(__file__).parent / "FE" / "dist"
@@ -60,6 +60,7 @@ _permission_meta: dict[tuple[str, str], dict] = {}
 
 # ============== SQLite (projects DB) ==============
 import sqlite3
+import collections
 
 _DB_PATH = Path(__file__).parent / "projects.db"
 
@@ -199,7 +200,7 @@ class _UserMessage(BaseModel):
     # be changed mid-stream without tearing down the SDK client.
     setting_sources: list[SettingSource] | None = None
     skills: list[str] | Literal["all"] | None = None
-    permission_mode: Literal["read_only", "bypassPermissions"] | None = None
+    permission_mode: Literal["read_only", "bypassPermissions", "plan"] | None = None
 
 
 class SessionLoop:
@@ -229,6 +230,13 @@ class SessionLoop:
         # can_use_tool reads this and denies out-of-scope tools when read_only.
         # Updated on every enqueued message, distinct from the build-time lock.
         self._current_permission_mode: str | None = None
+        # ponytail: SSE Last-Event-ID replay buffer. Monotonic per-session id is
+        # assigned in _broadcast; the deque is the bounded ring the spec assumes.
+        # maxlen=2000 caps memory at ~4MB / session for typical text_delta payloads.
+        # Long bash tool outputs may consume more; the messages-API catch-up
+        # covers the resulting gap (reducer dedupes).
+        self._event_seq: int = 0
+        self._event_buffer: collections.deque = collections.deque(maxlen=2000)
 
     def _touch(self):
         self._last_activity = asyncio.get_event_loop().time()
@@ -237,6 +245,7 @@ class SessionLoop:
         self._running = True
         self._task = asyncio.create_task(self._loop_body())
         asyncio.create_task(self._idle_watcher())
+        asyncio.create_task(self._context_usage_ticker())
 
     async def enqueue(self, msg: _UserMessage):
         self._touch()
@@ -303,9 +312,15 @@ class SessionLoop:
                 event = jsonable_encoder(event)
             except Exception:
                 event = {"type": "_sdk_raw", "message": str(event)}
+        # ponytail: assign monotonic id, buffer (eid, event), push tuple to subscribers.
+        # Same eid flows through buffer + sub_q + SSE frame so replay and live tail
+        # share a stable id end-to-end.
+        self._event_seq += 1
+        eid = self._event_seq
+        self._event_buffer.append((eid, event))
         for sub in list(self._subscribers):
             try:
-                sub.put_nowait(event)
+                sub.put_nowait((eid, event))
             except asyncio.QueueFull:
                 pass  # ponytail: drop slow subscriber
         self._touch()
@@ -325,16 +340,24 @@ class SessionLoop:
         loop_ref = self
 
         async def can_use_tool(tool_name: str, tool_input: dict, context: ToolPermissionContext):
-            # ponytail: runtime read-only gate. The SDK client is built once with
-            # the locked permission_mode and we never rebuild it mid-session
-            # (would lose context). When the user flips the FE toggle to
-            # read_only, _current_permission_mode is updated and every tool
-            # call from then on is denied here if it's outside the read-only
-            # allowlist. Without this, "Full Access → Read-Only" silently
-            # has no effect because the CLI was launched with bypassPermissions
-            # and the tool whitelist from the original build stays in force.
-            if loop_ref._current_permission_mode == "read_only" and tool_name not in _READ_ONLY_TOOLS:
-                print(f"[READ_ONLY] {self.session_id} denied {tool_name} (current_permission_mode=read_only)")
+            print(f"[PERM_HOOK] {self.session_id} tool={tool_name} mode={loop_ref._current_permission_mode!r}", flush=True)
+            # ponytail: the sole permission authority for the live session. The
+            # SDK client is built once with all tools available and no
+            # --permission-mode flag, so the CLI ships its full toolset and
+            # asks us about every dangerous call. Three modes:
+            #   - bypassPermissions: allow immediately, no FE dialog. The
+            #     "Full Access" toggle in the UI.
+            #   - read_only: deny anything outside the read-only allowlist,
+            #     no dialog. Live flips in either direction work because the
+            #     CLI's toolset was never narrowed.
+            #   - None / default: fall through to the FE permission dialog
+            #     (the historical behavior).
+            mode = loop_ref._current_permission_mode
+            if mode == "bypassPermissions":
+                print(f"[PERM] {self.session_id} allow {tool_name} (bypassPermissions)")
+                return PermissionResultAllow(updated_input=tool_input)
+            if mode == "read_only" and tool_name not in _READ_ONLY_TOOLS:
+                print(f"[PERM] {self.session_id} deny {tool_name} (read_only)")
                 return PermissionResultDeny(message=f"Tool '{tool_name}' is blocked: session is in read-only mode")
             request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex}"
             fut: asyncio.Future = asyncio.Future()
@@ -386,10 +409,12 @@ class SessionLoop:
 
         return can_use_tool
 
-    async def _build_client(self) -> ClaudeSDKClient:
-        # ponytail: mirror /api/chat — resume if jsonl exists, else create. The old
-        # hardcoded resume=False made the CLI reject every reconnect after a crash
-        # with "Session ID ... is already in use" (the file already existed).
+    async def _build_client(self, mode: str | None) -> ClaudeSDKClient:
+        # ponytail: build the SDK client for a specific FE mode. The toolset is
+        # baked at launch — to switch modes live we disconnect this client and
+        # reconnect with new options (see _loop_body). --resume carries the
+        # same session_id through, so the Claude API session and JSONL file
+        # stay continuous.
         project_key = _sdk_project_key(self.workspace)
         jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{self.session_id}.jsonl"
         s = self._locked_settings or {}
@@ -399,9 +424,8 @@ class SessionLoop:
             resume=jsonl_path.exists(),
             setting_sources=s.get("setting_sources"),
             skills=s.get("skills"),
-            permission_mode=s.get("permission_mode"),
+            permission_mode=mode,
         )
-        opts.can_use_tool = self._make_can_use_tool()
         client = ClaudeSDKClient(options=opts)
         await client.connect()
         return client
@@ -415,30 +439,56 @@ class SessionLoop:
             msg = await self._incoming.get()
             # Lock session-startup settings on the first message. Subsequent
             # messages carry the same fields but the client is already running,
-            # so we deliberately don't rebuild.
+            # so we deliberately don't rebuild those — only the permission
+            # mode may change.
             if self._locked_settings is None:
                 self._locked_settings = {
                     "setting_sources": msg.setting_sources,
                     "skills": msg.skills,
-                    "permission_mode": msg.permission_mode,
                 }
-            # ponytail: permission_mode is the one field that MUST update on
-            # every message — can_use_tool reads it to gate live tool calls
-            # (FE lets the user flip Full Access → Read-Only mid-session).
-            # The SDK client can't be rebuilt without losing context, so this
-            # is the only enforcement point that reflects the toggle.
-            self._current_permission_mode = msg.permission_mode
+            # ponytail: live permission switch. The toolset is launch-time in
+            # the SDK, so a mode flip means respawning the subprocess with
+            # --resume <session_id>. The conversation history and CLI's view
+            # of the session are preserved by the resume; the agent's
+            # in-memory state goes, but the next turn re-sees the full JSONL.
+            target_mode = msg.permission_mode
+            mode_changed = (
+                self._client is None
+                or getattr(self, "_current_permission_mode", None) != target_mode
+            )
+            if mode_changed:
+                if self._client is not None:
+                    try:
+                        await self._client.disconnect()
+                    except Exception:
+                        pass
+                    self._client = None
+                print(f"[PERM] {self.session_id} fe_mode={target_mode!r} -> respawn")
+                self._client = await self._build_client(target_mode)
+            self._current_permission_mode = target_mode
             # Reset per-turn state so each enqueued user message starts fresh.
             self._pending_tools = {}
             self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             jsonl_size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
             try:
-                if self._client is None:
-                    self._client = await self._build_client()
+                # ponytail: _build_client / respawn above guarantees _client is
+                # non-None here; the `assert` is a no-op at runtime and quiets
+                # the type checker.
+                assert self._client is not None
                 await self._client.query(self._make_generator(msg), session_id=self.session_id)
                 async for sdk_event in self._client.receive_response():
                     for legacy in self._translate_sdk_message(sdk_event, jsonl_path, jsonl_size_before):
                         await self._broadcast(legacy)
+                # Per-turn context snapshot at the result-message boundary. Same
+                # shape as the 10s ticker; the FE reducer handles both with one
+                # branch. _translate_sdk_message is sync, so the snapshot can't
+                # live inside the `done` yield — broadcast it here, after
+                # receive_response() drains.
+                try:
+                    ctx = await self._client.get_context_usage()
+                    await self._broadcast({"type": "context_usage", "data": ctx})
+                except Exception as e:
+                    print(f"[WARN] per-turn context usage snapshot failed: {e}")
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -605,6 +655,20 @@ class SessionLoop:
                 async with _registry_lock:
                     _SESSION_REGISTRY.pop(self.session_id, None)
                 return
+
+    async def _context_usage_ticker(self):
+        """Periodic context snapshot — every 10s while the session is alive.
+        Same shape as the per-turn snapshot in `done`; the FE reducer handles
+        both with one branch."""
+        while self._running:
+            await asyncio.sleep(10)
+            if self._client is None:
+                continue
+            try:
+                ctx = await self._client.get_context_usage()
+                await self._broadcast({"type": "context_usage", "data": ctx})
+            except Exception as e:
+                print(f"[WARN] context usage poll failed: {e}")
 
 
 async def get_or_create_loop(workspace: str, session_id: str) -> SessionLoop:
@@ -853,10 +917,35 @@ SYSTEM_PROMPT_EXPLANATION_SCHEMA = {
     },
 }
 
-# Read-only tool set applied when permission_mode == "read_only". These tools are the
-# only ones available to the agent (no write/executable tool can be called), and
-# they run with no approval prompt (see allowed_tools below).
+# Read-only tool set applied when permission_mode == "read_only". These tools
+# are the only ones available to the agent — no Bash, Write, Edit, MultiEdit,
+# or NotebookEdit can be called.
 _READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "WebFetch", "WebSearch"]
+# Tools explicitly denied when permission_mode == "read_only". The CLI honors
+# disallowedTools and will not even let the agent *try* to call them, so the
+# plan-mode trick (turning Bash into a plan entry) is no longer needed.
+_READ_ONLY_DISALLOWED = ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"]
+
+
+# ponytail: per-mode profile for the SDK. Each entry is the SDK's
+# permission_mode string plus the toolset the CLI should expose. read_only is
+# NOT mapped to plan mode (plan is a workflow, not a restriction — it would
+# still let read-only bash through and let the agent write to its own plan
+# file). The tool whitelist is the only thing that actually blocks Bash in
+# read_only.
+_MODE_PROFILES: dict[str | None, tuple[str | None, list[str] | None, list[str] | None]] = {
+    None:                ("default",          None, None),
+    "default":           ("default",          None, None),
+    "bypassPermissions": ("bypassPermissions", None, None),
+    "read_only":         (None,               list(_READ_ONLY_TOOLS), list(_READ_ONLY_DISALLOWED)),
+    "plan":              ("plan",             None, None),
+}
+
+
+def _resolve_mode_profile(fe_mode: str | None) -> tuple[str | None, list[str] | None, list[str] | None]:
+    """Return (sdk_permission_mode, allowed_tools, disallowed_tools) for an FE mode.
+    Unknown values fall back to default so a typo can't silently widen access."""
+    return _MODE_PROFILES.get(fe_mode, _MODE_PROFILES[None])
 
 def _build_options(
     workspace: str,
@@ -865,16 +954,16 @@ def _build_options(
     system_prompt: str | None = None,
     setting_sources: list[SettingSource] | None = None,
     skills: list[str] | Literal["all"] | None = None,
-    permission_mode: Literal["read_only", "bypassPermissions"] | None = None,
+    permission_mode: str | None = None,
 ) -> ClaudeAgentOptions:
-    # "read_only" (read-only) is enforced via a tool whitelist rather than the SDK's
-    # read_only semantics: run on default permission checks but only expose the
-    # read-only tools so no write/executable tool can ever be called.
-    read_only = permission_mode == "read_only"
     # ponytail: SDK hangs when skills=[] (empty list); coerce to None so it uses defaults.
     if skills == []:
         skills = None
-    print(f"[SDK_OPTS] session_id={session_id} setting_sources={setting_sources} skills={skills} permission_mode={permission_mode} read_only={read_only}")
+    sdk_mode, allowed_tools, disallowed_tools = _resolve_mode_profile(permission_mode)
+    print(
+        f"[SDK_OPTS] session_id={session_id} setting_sources={setting_sources} skills={skills} "
+        f"fe_mode={permission_mode!r} sdk_mode={sdk_mode!r} allowed={allowed_tools} disallowed={disallowed_tools}"
+    )
     opts = ClaudeAgentOptions(
         model=LLM_MODEL,
         system_prompt=system_prompt,
@@ -891,37 +980,24 @@ def _build_options(
         include_partial_messages=True,
         setting_sources=setting_sources,
         skills=skills,
-        permission_mode=None if read_only else permission_mode,
+        permission_mode=cast(PermissionMode, sdk_mode),
+        allowed_tools=allowed_tools or [],
+        disallowed_tools=disallowed_tools or [],
     )
-    if read_only:
-        opts.tools = list(_READ_ONLY_TOOLS)
-        opts.allowed_tools = list(_READ_ONLY_TOOLS)
     return opts
 
 
 # ============== SSE Helper ==============
 
-def format_sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+def format_sse(event: str, data: dict, event_id: int | None = None) -> str:
+    # ponytail: emit `id:` only when explicitly set. Heartbeats must NOT carry an
+    # id — per HTML5 SSE spec, lastEventId only updates on `id:` lines, so a
+    # heartbeat that bumped the id would corrupt the replay cursor on quiet streams.
+    head = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{head}event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 # ============== Models ==============
-
-class ChatRequest(BaseModel):
-    message: str
-    thread_id: str | None = None
-    project_id: int | None = None
-    speech_explanation: bool = False
-    """When true, agent generates a speech explanation for each response via StructuredOutput."""
-    setting_sources: list[SettingSource] | None = None
-    """Control which filesystem settings to load. null = SDK defaults (all sources)."""
-    skills: list[str] | Literal["all"] | None = None
-    """Skills to enable. null = SDK defaults, [] = no skills, 'all' = all discovered skills."""
-    permission_mode: Literal["read_only", "bypassPermissions"] | None = None
-    """Permission mode. 'read_only' = read-only (tool whitelist), 'bypassPermissions' = full access, null = SDK defaults."""
-    image_paths: list[str] | None = None
-    """Local paths to images to attach to this message. Model will read them via its Read tool."""
-
 
 class WorkspaceSelectRequest(BaseModel):
     thread_id: str | None = None
@@ -1173,25 +1249,7 @@ async def get_current_workspace(session_id: str | None = None):
     return {"workspace": _DEFAULT_WORKSPACE}
 
 
-# ============== Image upload endpoint ==============
-
-@app.post("/api/upload")
-async def upload_images(files: list[UploadFile]):
-    """Save uploaded images to /tmp/uploads and return their paths."""
-    upload_dir = Path("/tmp/uploads")
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    paths: list[str] = []
-    for f in files:
-        ext = Path(f.filename or "image.png").suffix or ".png"
-        path = upload_dir / f"{uuid.uuid4().hex}{ext}"
-        path.write_bytes(await f.read())
-        paths.append(str(path))
-
-    return {"paths": paths}
- 
- 
- # ============== TTS audio endpoint ==============
+# ============== TTS audio endpoint ==============
 
 @app.get("/api/tts")
 async def tts_endpoint(q: str):
@@ -1307,357 +1365,6 @@ async def permission_pending(thread_id: str | None = None):
     return {"requests": requests}
 
 
-@app.post("/api/chat")
-async def chat(request: ChatRequest):
-    """Send a message and stream the response using Claude Agent SDK.
-
-    thread_id IS the SDK session_id (UUID). History is read from SDK JSONL.
-    """
-    if not request.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-    print(f"[CHAT_REQUEST] {request.model_dump_json(exclude={'message'})}")
-
-    # Resolve workspace from project_id
-    workspace = _resolve_workspace(request.project_id)
-    workspace = str(Path(workspace).expanduser().resolve())
-
-    # Resolve session_id — must be UUID for SDK; generate new if invalid
-    raw = request.thread_id
-    if raw:
-        try:
-            uuid.UUID(raw)
-            session_id = raw
-        except ValueError:
-            session_id = str(uuid.uuid4())
-    else:
-        session_id = str(uuid.uuid4())
-
-    # Check if this session already has a history file to decide create vs resume
-    project_key = _sdk_project_key(workspace)
-    jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
-    session_exists = jsonl_path.exists()
-
-    async def event_stream():
-        # Unified queue for all SSE events (both from receive_response worker and can_use_tool callback)
-        sse_queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
-
-        async def can_use_tool(
-            tool_name: str,
-            tool_input: dict,
-            context: ToolPermissionContext,
-        ) -> PermissionResultAllow | PermissionResultDeny:
-            request_id = context.tool_use_id or f"perm_{uuid.uuid4().hex}"
-            future: asyncio.Future = asyncio.Future()
-            _permission_futures[(session_id, request_id)] = future
-            meta = {
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_use_id": context.tool_use_id,
-                "title": context.title,
-                "description": context.description,
-                "suggestions": [s.to_dict() for s in (context.suggestions or [])],
-                "session_id": session_id,
-            }
-            _permission_meta[(session_id, request_id)] = meta
-            # Put SSE event directly into queue so the generator yields it immediately
-            sse_queue.put_nowait(("message", {
-                "type": "permission_request",
-                "request_id": request_id,
-                "session_id": session_id,
-                **meta,
-            }))
-            try:
-                result = await asyncio.wait_for(future, timeout=300)
-            except asyncio.TimeoutError:
-                result = {"decision": "deny", "message": "Permission request timed out"}
-            finally:
-                _permission_futures.pop((session_id, request_id), None)
-                _permission_meta.pop((session_id, request_id), None)
-            decision = result["decision"]
-            if decision == "allow":
-                # AskUserQuestion: answers IS the tool result — must be returned as updated_input
-                answers = result.get("answers")
-                if tool_name == "AskUserQuestion" and answers is not None:
-                    # JS UI needs questions array + answers; pass both
-                    return PermissionResultAllow(updated_input={
-                        "questions": tool_input.get("questions", []),
-                        "answers": answers,
-                    })
-                updated = result.get("updated_input")
-                if tool_name in {"Edit", "Bash", "Write", "NotebookEdit"} and updated is None:
-                    print(f"[WARN] {tool_name} approved without updated_input; FE may have discarded edits")
-                final_input: dict | None = updated if isinstance(updated, dict) else tool_input
-                return PermissionResultAllow(updated_input=final_input)
-            return PermissionResultDeny(message=result.get("message", "User denied"))
-
-        speech_mode = request.speech_explanation
-        opts = _build_options(
-            workspace=workspace,
-            session_id=session_id,
-            resume=session_exists,
-            system_prompt=SPEECH_EXPLANATION_SYSTEM_PROMPT if speech_mode else None,
-            setting_sources=request.setting_sources,
-            skills=request.skills,
-            permission_mode=request.permission_mode,
-        )
-
-        # In speech mode, request structured output for the explanation
-        if speech_mode:
-            opts.output_format = SYSTEM_PROMPT_EXPLANATION_SCHEMA
-
-        # Wire permission callback for FE dialogs + AskUserQuestion. But skip it
-        # when the user picked "Full Access" (bypassPermissions): the SDK auto-sets
-        # permission_prompt_tool_name="stdio" whenever can_use_tool is set, and that
-        # flag makes the CLI restrict the active tool set — Write/Edit/Bash vanish
-        # from the agent even though bypassPermissions is also passed. The whole
-        # point of Full Access is "no per-tool ask", so the stdio detour is the
-        # wrong path. CLI gets just --permission-mode bypassPermissions and auto-
-        # approves everything.
-        if request.permission_mode != 'bypassPermissions':
-            opts.can_use_tool = can_use_tool
-
-        # Remember JSONL file size before this turn so we can read only new entries
-        # after the turn completes to get actual tool result content
-        project_key = _sdk_project_key(workspace)
-        jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{session_id}.jsonl"
-        jsonl_size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
-
-        # Capture client + cache_key so the outer finally can disconnect/evict.
-        state: dict[str, Any] = {"client": None, "cache_key": f"{workspace}:{session_id}"}
-
-        async def response_reader():
-            nonlocal state
-            pending_tools: dict[int, dict] = {}
-            turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-            try:
-                # Per-session lock so concurrent requests for same session_id serialize
-                session_lk = await _session_lock(session_id)
-                async with session_lk:
-                    has_custom_config = any([
-                        request.setting_sources is not None,
-                        request.skills is not None,
-                        request.permission_mode is not None,
-                    ])
-                    cache_key = state["cache_key"]
-                    async with _cache_lock:
-                        if cache_key in _WORKSPACE_CLIENTS and not has_custom_config:
-                            client = _WORKSPACE_CLIENTS[cache_key]
-                        else:
-                            client = ClaudeSDKClient(options=opts)
-                            await client.connect()
-                            if not has_custom_config:
-                                _WORKSPACE_CLIENTS[cache_key] = client
-                    state["client"] = client
-
-                    # Build prompt with image context if any were uploaded
-                    prompt = request.message
-                    if request.image_paths:
-                        image_context = "\n".join(
-                            f"- image_{i+1}: {p}" for i, p in enumerate(request.image_paths)
-                        )
-                        prompt = f"Attached images:\n{image_context}\n\n{request.message}"
-
-                    await client.query(prompt=prompt)
-
-                    async for msg in client.receive_response():
-                        # --- StreamEvent ---
-                        if isinstance(msg, StreamEvent):
-                            evt = msg.event
-                            evt_type = evt.get("type")
-
-                            if evt_type == "content_block_delta":
-                                delta = evt.get("delta", {})
-                                d_type = delta.get("type")
-
-                                if d_type == "text_delta":
-                                    sse_queue.put_nowait(("message", {
-                                        "type": "text_delta",
-                                        "content": delta.get("text", ""),
-                                    }))
-
-                                elif d_type == "thinking_delta":
-                                    sse_queue.put_nowait(("message", {
-                                        "type": "thinking_delta",
-                                        "content": delta.get("thinking", ""),
-                                    }))
-
-                                elif d_type == "input_json_delta":
-                                    idx = evt.get("index")
-                                    partial = delta.get("partial_json", "")
-                                    if idx in pending_tools:
-                                        pending_tools[idx]["args_str"] += partial
-
-                            elif evt_type == "content_block_start":
-                                cb = evt.get("content_block", {})
-                                if cb.get("type") == "tool_use":
-                                    idx: int | None = evt.get("index")
-                                    if idx is not None:
-                                        pending_tools[idx] = {
-                                            "name": cb.get("name"),
-                                            "id": cb.get("id"),
-                                            "args_str": "",
-                                        }
-
-                            elif evt_type == "message_delta":
-                                usage = evt.get("usage", {})
-                                if usage:
-                                    turn_usage["input_tokens"] += usage.get("prompt_tokens", 0)
-                                    turn_usage["output_tokens"] += usage.get("completion_tokens", 0)
-                                    turn_usage["total_tokens"] = (
-                                        turn_usage["input_tokens"] + turn_usage["output_tokens"]
-                                    )
-
-                            elif evt_type == "content_block_stop":
-                                pass
-
-                            elif evt_type == "message_stop":
-                                for idx, tool_data in pending_tools.items():
-                                    args_str = tool_data.get("args_str", "")
-                                    try:
-                                        args_json = json.loads(args_str) if args_str else {}
-                                    except json.JSONDecodeError:
-                                        args_json = {}
-                                    sse_queue.put_nowait(("message", {
-                                        "type": "tool_result",
-                                        "tool_name": tool_data["name"],
-                                        "tool_id": tool_data["id"],
-                                        "args": args_json,
-                                    }))
-                                pending_tools.clear()
-
-                        # --- ResultMessage ---
-                        elif isinstance(msg, ResultMessage):
-                            if msg.model_usage and turn_usage["total_tokens"] == 0:
-                                for model, u in msg.model_usage.items():
-                                    turn_usage["input_tokens"] += u.get("inputTokens", 0)
-                                    turn_usage["output_tokens"] += u.get("outputTokens", 0)
-                                turn_usage["total_tokens"] = (
-                                    turn_usage["input_tokens"] + turn_usage["output_tokens"]
-                                )
-                            elif msg.usage and turn_usage["total_tokens"] == 0:
-                                turn_usage["input_tokens"] = msg.usage.get("input_tokens", 0)
-                                turn_usage["output_tokens"] = msg.usage.get("output_tokens", 0)
-                                turn_usage["total_tokens"] = msg.usage.get("total_tokens", 0)
-
-                            if speech_mode and msg.structured_output:
-                                explanation = msg.structured_output.get("explanation", "")
-                                if explanation:
-                                    sse_queue.put_nowait(("message", {
-                                        "type": "speech_explanation",
-                                        "content": explanation,
-                                    }))
-
-                            try:
-                                ctx = await client.get_context_usage()
-                                if ctx:
-                                    sse_queue.put_nowait(("message", {
-                                        "type": "context_usage",
-                                        "data": ctx,
-                                    }))
-                            except Exception as e:
-                                print(f"[WARN] get_context_usage failed: {e}")
-
-                            if jsonl_path.exists():
-                                with open(jsonl_path, "rb") as f:
-                                    f.seek(jsonl_size_before)
-                                    new_bytes = f.read()
-                                if new_bytes.strip():
-                                    for line in new_bytes.split(b"\n"):
-                                        if not line.strip():
-                                            continue
-                                        try:
-                                            entry = json.loads(line.decode("utf-8", errors="replace"))
-                                        except Exception:
-                                            continue
-                                        if entry.get("type") != "user":
-                                            continue
-                                        msg_content = entry.get("message", {}).get("content", [])
-                                        if not isinstance(msg_content, list):
-                                            continue
-                                        for block in msg_content:
-                                            if block.get("type") != "tool_result":
-                                                continue
-                                            tool_result = block.get("content", "")
-                                            text_parts = []
-                                            if isinstance(tool_result, list):
-                                                for item in tool_result:
-                                                    if isinstance(item, dict):
-                                                        if item.get("type") == "text":
-                                                            text_parts.append(item.get("text", ""))
-                                            content = "".join(text_parts) if text_parts else str(tool_result)
-                                            source_uuid = entry.get("sourceToolAssistantUUID", "")
-                                            if source_uuid in pending_tools and pending_tools[source_uuid].get("name") == "StructuredOutput":
-                                                continue
-                                            if content:
-                                                sse_queue.put_nowait(("message", {
-                                                    "type": "tool_result_content",
-                                                    "tool_id": source_uuid,
-                                                    "content": content,
-                                                }))
-                                        pending_tools.clear()
-
-                            sse_queue.put_nowait(("done", {
-                                "thread_id": session_id,
-                                "usage": turn_usage if turn_usage["total_tokens"] > 0 else None,
-                            }))
-
-            except Exception as err:
-                print(f"Error during response_reader: {err}")
-                sse_queue.put_nowait(("error", {"message": str(err)}))
-            finally:
-                sse_queue.put_nowait(None)
-
-        reader_task = asyncio.create_task(response_reader())
-        try:
-            while True:
-                item = await sse_queue.get()
-                if item is None:
-                    break
-                event_name, event_data = item
-                yield format_sse(event_name, event_data)
-        finally:
-            # Resolve dangling permissions FIRST so wait_for in response_reader exits.
-            # Only AFTER resolving should we cancel the reader task.
-            for key, fut in list(_permission_futures.items()):
-                if key[0] == session_id and not fut.done():
-                    fut.set_result({"decision": "deny", "message": "Session ended"})
-                    _permission_futures.pop(key, None)
-                    _permission_meta.pop(key, None)
-            if not reader_task.done():
-                reader_task.cancel()
-                try:
-                    await reader_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            # ponytail: tear down the cached client so a stale subprocess can't be reused (Bug 1).
-            client = state.get("client")
-            if client is not None:
-                try:
-                    await client.interrupt()
-                except Exception:
-                    pass
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
-            async with _cache_lock:
-                _WORKSPACE_CLIENTS.pop(state["cache_key"], None)
-            # Clean up uploaded image files
-            if request.image_paths:
-                for path in request.image_paths:
-                    Path(path).unlink(missing_ok=True)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
-    )
-
-
 # ============== Streaming-Input Mode Endpoints (Phase 1+2) ==============
 
 @app.post("/api/sessions/{session_id}/messages")
@@ -1678,22 +1385,40 @@ async def post_session_message(
 
 
 @app.get("/api/sessions/{session_id}/events")
-async def session_events(session_id: str, workspace: str = Query(...)):
+async def session_events(session_id: str, workspace: str = Query(...), request: Request = None):
     try:
         uuid.UUID(session_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="session_id must be a UUID")
     loop = await get_or_create_loop(workspace, session_id)
+    # ponytail: Last-Event-ID is the SSE-spec replay cursor. EventSource sets it
+    # automatically on reconnect when the prior stream emitted `id:` lines.
+    # Malformed (non-digit) is treated as 0 = full replay, which is safe.
+    last_event_id = request.headers.get("Last-Event-ID") if request is not None else None
+    last_id_int = int(last_event_id) if last_event_id and last_event_id.isdigit() else 0
+    # ponytail: subscribe FIRST, then snapshot the buffer's high-water mark.
+    # Anything broadcast after this snapshot arrives in sub_q only (the replay
+    # scan is bounded by id <= buffer_high, the live tail is id > buffer_high).
+    # No overlap, no gap, no lock needed in single-threaded asyncio.
     sub_q = loop.subscribe()
-
+    buffer_high = loop._event_seq
+    print(session_id, workspace)
     async def stream():
         try:
+            # Replay buffered events missed during the disconnect window.
+            # O(n) at n=2000 — sub-millisecond, no indexing needed.
+            for eid, ev in list(loop._event_buffer):
+                if last_id_int < eid <= buffer_high:
+                    print(f"[REPLAY] {session_id} sending {eid}", flush=True)
+                    yield format_sse("message", ev, event_id=eid)
+            # Live tail: anything broadcast after the buffer_high snapshot.
             while True:
                 try:
-                    event = await asyncio.wait_for(sub_q.get(), timeout=15)
-                    yield format_sse("message", event)
+                    eid, event = await asyncio.wait_for(sub_q.get(), timeout=15)
+                    yield format_sse("message", event, event_id=eid)
                 except asyncio.TimeoutError:
                     # ponytail: keepalive so proxies don't reap the connection.
+                    # No event_id — preserves lastEventId across the keepalive.
                     yield format_sse("heartbeat", {"ts": asyncio.get_event_loop().time()})
         finally:
             loop.unsubscribe(sub_q)

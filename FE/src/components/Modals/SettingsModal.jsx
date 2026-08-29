@@ -34,9 +34,11 @@ export default function SettingsModal() {
   // Permission description
   let permDesc = 'null (SDK Default: Standard tool permission checks)';
   if (currentPerm === 'read_only') {
-    permDesc = '"read_only" (Read-only: Read, Glob, Grep only)';
+    permDesc = '"read_only" (Read-only: Read, Glob, Grep, WebFetch, WebSearch — no Bash/Write/Edit)';
   } else if (currentPerm === 'bypassPermissions') {
     permDesc = '"bypassPermissions" (Full Access: All tool checks bypassed)';
+  } else if (currentPerm === 'plan') {
+    permDesc = '"plan" (Plan mode: agent drafts a plan and waits for ExitPlanMode approval)';
   }
 
   // Source description
@@ -116,7 +118,7 @@ export default function SettingsModal() {
                 <div className="text-[11px] text-txt-subtle">Controls what the agent is allowed to do</div>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[11px] font-medium">
+            <div className="grid grid-cols-4 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[11px] font-medium">
               <button
                 type="button"
                 onClick={() => setPermissionMode(null)}
@@ -149,6 +151,17 @@ export default function SettingsModal() {
                 }`}
               >
                 Full Access
+              </button>
+              <button
+                type="button"
+                onClick={() => setPermissionMode('plan')}
+                className={`py-1 rounded transition-colors text-center cursor-pointer ${
+                  currentPerm === 'plan'
+                    ? 'bg-brand text-white shadow-sm'
+                    : 'text-txt-subtle hover:text-white'
+                }`}
+              >
+                Plan
               </button>
             </div>
             <div className="text-[10px] text-txt-subtle font-mono">{permDesc}</div>

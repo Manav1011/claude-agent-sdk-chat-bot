@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from '../../context/ChatContext';
+import TabSwitcher from './TabSwitcher';
 
 export default function Header() {
   const {
@@ -13,7 +14,11 @@ export default function Header() {
     messages,
     expandThoughts,
     setExpandThoughts,
+    openTabs,
   } = useChat();
+
+  // Mobile tab-switcher sheet state
+  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const currentSession = (projectSessions[activeProjectId] || []).find(
@@ -132,16 +137,41 @@ export default function Header() {
         </button>
       </div>
 
-      {/* Mobile-only overflow menu — single ⋯ button keeps the header clean. */}
-      <div className="sm:hidden relative shrink-0" ref={menuRef}>
+      {/* Mobile-only tab switcher — browser-style "show all open tabs" sheet.
+          Hidden on sm+ because the top TabBar already shows tabs on desktop. */}
+      <div className="sm:hidden flex items-center gap-2">
         <button
           type="button"
-          onClick={() => setMenuOpen((v) => !v)}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          className="p-1.5 rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border text-txt-muted hover:text-white transition-colors flex items-center justify-center cursor-pointer"
-          title="More"
+          onClick={() => setSwitcherOpen(true)}
+          className="relative p-1.5 rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border text-txt-muted hover:text-white transition-colors flex items-center justify-center cursor-pointer"
+          title="Open tabs"
+          aria-label="Open tabs"
         >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="1.75"
+              d="M4 5a2 2 0 012-2h4a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V5zM14 5a2 2 0 012-2h4a2 2 0 012 2v4a2 2 0 01-2 2h-4a2 2 0 01-2-2V5zM4 15a2 2 0 012-2h4a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 15a2 2 0 012-2h4a2 2 0 012 2v4a2 2 0 01-2 2h-4a2 2 0 01-2-2v-4z"
+            />
+          </svg>
+          {openTabs.length > 1 && (
+            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-brand text-[9px] font-mono font-semibold text-white flex items-center justify-center pointer-events-none ring-2 ring-dark-bg">
+              {openTabs.length}
+            </span>
+          )}
+        </button>
+
+        {/* Mobile-only overflow menu — single ⋯ button keeps the header clean. */}
+        <div className="relative shrink-0" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="p-1.5 rounded-lg bg-dark-elevated hover:bg-dark-border border border-dark-border text-txt-muted hover:text-white transition-colors flex items-center justify-center cursor-pointer"
+            title="More"
+          >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
           </svg>
@@ -182,7 +212,10 @@ export default function Header() {
             </button>
           </div>
         )}
+        </div>
       </div>
+
+      <TabSwitcher isOpen={switcherOpen} onClose={() => setSwitcherOpen(false)} />
     </header>
   );
 }

@@ -78,101 +78,6 @@ export async function submitPermissionDecision({ requestId, sessionId, decision,
   return res.json();
 }
 
-export async function uploadImagesApi(files) {
-  const formData = new FormData();
-  for (const file of files) {
-    formData.append('files', file);
-  }
-  const res = await fetch('/api/upload', {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || 'Failed to upload images');
-  }
-  return res.json();
-}
-
-export async function* streamChatApi({
-  message,
-  imagePaths = [],
-  threadId,
-  projectId,
-  speechExplanation,
-  settingSources,
-  skillsMode,
-  skillsList,
-  permissionMode,
-  signal,
-}) {
-  let skillsPayload = null;
-  if (skillsMode === 'none') {
-    skillsPayload = [];
-  } else if (skillsMode === 'custom') {
-    skillsPayload = Array.isArray(skillsList) ? skillsList : [];
-  }
-
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message,
-      image_paths: Array.isArray(imagePaths) && imagePaths.length > 0 ? imagePaths : null,
-      thread_id: threadId,
-      project_id: projectId || null,
-      speech_explanation: Boolean(speechExplanation),
-      setting_sources: settingSources,
-      skills: skillsPayload,
-      permission_mode: permissionMode,
-    }),
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(`Server returned error ${response.status}`);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop() || '';
-
-      for (const part of parts) {
-        const lines = part.split('\n');
-        let currentEvent = null;
-        let eventData = null;
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            try {
-              eventData = JSON.parse(line.slice(6).trim());
-            } catch (e) {
-              console.error('Failed to parse SSE data:', e);
-            }
-          }
-        }
-
-        if (currentEvent && eventData !== null) {
-          yield { event: currentEvent, data: eventData };
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 // --- Streaming-input mode helpers (long-lived SSE session) ---
 
 export async function sendSessionMessage({ threadId, workspace, content, images = null, settingSources, skills, permissionMode, signal }) {
@@ -220,7 +125,12 @@ export function createSessionEventSource({ threadId, workspace }) {
   const onMessage = (ev) => {
     try {
       const data = JSON.parse(ev.data);
-      emit({ event: 'message', data });
+      // ponytail: SSE-spec replay id. ev.lastEventId is set by the browser from
+      // the `id:` line in the prior stream; empty string when the server never
+      // sent one (old server compat). Propagated as metadata — the reducer
+      // ignores unknown fields, and the visibilitychange handler reads it
+      // indirectly via the existing fatal/error flow.
+      emit({ event: 'message', data, id: ev.lastEventId || null });
     } catch (e) {
       console.error('Failed to parse session event data', e);
     }
@@ -231,7 +141,15 @@ export function createSessionEventSource({ threadId, workspace }) {
       emit({ event: 'heartbeat', data });
     } catch (_) {}
   };
-  const onError = () => emit({ event: 'error', data: { message: 'EventSource error' } });
+  // ponytail: EventSource fires onerror in three states. CONNECTING = browser
+  // is auto-reconnecting (transient, silent). OPEN = shouldn't fire onerror but
+  // if it does, the connection is alive. CLOSED = terminal, browser will not
+  // reconnect — emit a fatal flag so callers can recreate the source.
+  const onError = () => {
+    if (es.readyState === EventSource.CONNECTING) return;
+    const fatal = es.readyState === EventSource.CLOSED;
+    emit({ event: 'error', data: { message: 'EventSource error', fatal } });
+  };
 
   es.addEventListener('message', onMessage);
   es.addEventListener('heartbeat', onHeartbeat);

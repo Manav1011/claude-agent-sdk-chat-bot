@@ -1,0 +1,57 @@
+Starting chat server...
+Chat server started with PID: 1034092
+Starting cloudflared tunnel...
+2026-08-28T15:23:12Z INF Starting tunnel tunnelID=9af40957-a400-4b43-b062-a525675190b2
+2026-08-28T15:23:12Z INF Version 2025.11.1 (Checksum 991dffd8889ee9f0147b6b48933da9e4407e68ea8c6d984f55fa2d3db4bb431d)
+2026-08-28T15:23:12Z INF GOOS: linux, GOVersion: go1.24.9, GoArch: amd64
+2026-08-28T15:23:12Z INF Settings: map[config:/home/web-h-063/.cloudflared/webclaude/config.yml cred-file:/home/web-h-063/.cloudflared/9af40957-a400-4b43-b062-a525675190b2.json credentials-file:/home/web-h-063/.cloudflared/9af40957-a400-4b43-b062-a525675190b2.json]
+2026-08-28T15:23:12Z INF cloudflared will not automatically update if installed by a package manager.
+2026-08-28T15:23:12Z INF Generated Connector ID: af55c497-615e-4022-adcf-7d4048fe9031
+2026-08-28T15:23:12Z INF Initial protocol quic
+2026-08-28T15:23:12Z INF ICMP proxy will use 192.168.7.206 as source for IPv4
+2026-08-28T15:23:12Z INF ICMP proxy will use fe80::a05e:3d7e:dcbd:2464 in zone wlxe848b8c81eae as source for IPv6
+2026-08-28T15:23:12Z ERR Cannot determine default origin certificate path. No file cert.pem in [~/.cloudflared ~/.cloudflare-warp ~/cloudflare-warp /etc/cloudflared /usr/local/etc/cloudflared]. You need to specify the origin certificate path by specifying the origincert option in the configuration file, or set TUNNEL_ORIGIN_CERT environment variable originCertPath=
+2026-08-28T15:23:12Z INF ICMP proxy will use 192.168.7.206 as source for IPv4
+2026-08-28T15:23:12Z INF ICMP proxy will use fe80::a05e:3d7e:dcbd:2464 in zone wlxe848b8c81eae as source for IPv6
+2026-08-28T15:23:12Z INF Starting metrics server on 127.0.0.1:20242/metrics
+2026-08-28T15:23:12Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=0 event=0 ip=198.41.200.43
+2026/08/28 20:53:12 failed to sufficiently increase send buffer size (was: 208 kiB, wanted: 7168 kiB, got: 416 kiB). See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.
+INFO:     Started server process [1034092]
+INFO:     Waiting for application startup.
+[0;93m2026-08-28 20:53:12.920472269 [W:onnxruntime:Default, device_discovery.cc:283 GetGpuDevices] Failed to detect devices under "/sys/class/drm/card0": device_discovery.cc:93 ReadFileContents Failed to open file: "/sys/class/drm/card0/device/vendor"[m
+2026-08-28T15:23:13Z INF Registered tunnel connection connIndex=0 connection=7f257cd2-b931-41ca-8963-3ba1b64aebb3 event=0 ip=198.41.200.43 location=bom12 protocol=quic
+2026-08-28T15:23:13Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=1 event=0 ip=198.41.192.77
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8225 (Press CTRL+C to quit)
+2026-08-28T15:23:14Z INF Registered tunnel connection connIndex=1 connection=f59db5ba-c95d-48fb-bdcf-472d12cd704d event=0 ip=198.41.192.77 location=bom06 protocol=quic
+2026-08-28T15:23:14Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=2 event=0 ip=198.41.200.113
+2026-08-28T15:23:14Z INF Registered tunnel connection connIndex=2 connection=b3b4d54a-02a5-4ab7-a6a1-a0d23d5b4eb5 event=0 ip=198.41.200.113 location=bom08 protocol=quic
+2026-08-28T15:23:15Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=3 event=0 ip=198.41.192.227
+2026-08-28T15:23:16Z INF Registered tunnel connection connIndex=3 connection=c3595afc-47d7-4837-94e8-4be890c1893e event=0 ip=198.41.192.227 location=bom03 protocol=quic
+[INFO] Piper TTS model warm-loaded successfully from en_US-ryan-medium.onnx.
+87235c1d-f724-4bdb-90dc-12d24f6a766d /home/web-h-063/Documents/explainer-bot
+INFO:     152.59.51.102:0 - "GET /api/sessions/87235c1d-f724-4bdb-90dc-12d24f6a766d/events?workspace=%2Fhome%2Fweb-h-063%2FDocuments%2Fexplainer-bot HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET / HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET /api/projects HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET /api/projects/2/sessions?limit=5&offset=0 HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET /api/sessions/87235c1d-f724-4bdb-90dc-12d24f6a766d/messages?limit=50&project_id=2 HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET /api/permissions/pending?thread_id=87235c1d-f724-4bdb-90dc-12d24f6a766d HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET / HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET /manifest.webmanifest HTTP/1.1" 200 OK
+2026-08-28T15:24:53Z ERR  error="stream 1 canceled by remote with error code 0" connIndex=2 event=1 ingressRule=0 originService=http://localhost:8225
+2026-08-28T15:24:53Z ERR Request failed error="stream 1 canceled by remote with error code 0" connIndex=2 dest=https://webclaude.gj01.online/api/sessions/87235c1d-f724-4bdb-90dc-12d24f6a766d/events?workspace=%2Fhome%2Fweb-h-063%2FDocuments%2Fexplainer-bot event=0 ip=198.41.200.113 type=http
+INFO:     152.59.51.102:0 - "GET /api/projects HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET /api/projects/2/sessions?limit=5&offset=0 HTTP/1.1" 200 OK
+[FE_OPTS] 2d5bd651-bdca-49bb-bc05-b84c78a00f53 setting_sources=None skills=[] permission_mode=None
+INFO:     152.59.51.102:0 - "POST /api/sessions/2d5bd651-bdca-49bb-bc05-b84c78a00f53/messages?workspace=%2Fhome%2Fweb-h-063%2FDocuments%2Fexplainer-bot HTTP/1.1" 200 OK
+[PERM] 2d5bd651-bdca-49bb-bc05-b84c78a00f53 fe_mode=None -> respawn
+[SDK_OPTS] session_id=2d5bd651-bdca-49bb-bc05-b84c78a00f53 setting_sources=None skills=None fe_mode=None sdk_mode='default' allowed=None disallowed=None
+2d5bd651-bdca-49bb-bc05-b84c78a00f53 /home/web-h-063/Documents/explainer-bot
+INFO:     152.59.51.102:0 - "GET /api/sessions/2d5bd651-bdca-49bb-bc05-b84c78a00f53/events?workspace=%2Fhome%2Fweb-h-063%2FDocuments%2Fexplainer-bot HTTP/1.1" 200 OK
+INFO:     152.59.51.102:0 - "GET /api/projects/2/sessions?limit=5&offset=0 HTTP/1.1" 200 OK
+[FE_OPTS] 2d5bd651-bdca-49bb-bc05-b84c78a00f53 setting_sources=None skills=[] permission_mode=None
+INFO:     152.59.51.102:0 - "POST /api/sessions/2d5bd651-bdca-49bb-bc05-b84c78a00f53/messages?workspace=%2Fhome%2Fweb-h-063%2FDocuments%2Fexplainer-bot HTTP/1.1" 200 OK
+[FE_OPTS] 2d5bd651-bdca-49bb-bc05-b84c78a00f53 setting_sources=None skills=[] permission_mode=None
+INFO:     152.59.51.102:0 - "POST /api/sessions/2d5bd651-bdca-49bb-bc05-b84c78a00f53/messages?workspace=%2Fhome%2Fweb-h-063%2FDocuments%2Fexplainer-bot HTTP/1.1" 200 OK
+2026-08-28T15:30:39Z ERR  error="stream 45 canceled by remote with error code 0" connIndex=2 event=1 ingressRule=0 originService=http://localhost:8225
+2026-08-28T15:30:39Z ERR Request failed error="stream 45 canceled by remote with error code 0" connIndex=2 dest=https://webclaude.gj01.online/api/sessions/2d5bd651-bdca-49bb-bc05-b84c78a00f53/events?workspace=%2Fhome%2Fweb-h-063%2FDocuments%2Fexplainer-bot event=0 ip=198.41.200.113 type=http

@@ -9,7 +9,6 @@ import {
   deleteSessionApi,
   fetchPendingPermissions,
   submitPermissionDecision,
-  streamChatApi,
   sendSessionMessage,
   interruptSession,
   createSessionEventSource,
@@ -97,6 +96,11 @@ export function ChatProvider({ children }) {
   // projectSessions), refresh the workspace's session list once so it shows up
   // in the sidebar without a page reload. Cleared when the user changes projects.
   const sidebarRefreshedForRef = useRef(new Set());
+
+  // ponytail: gate the visibilitychange catch-up so it only runs on a true
+  // hidden→visible transition with at least one dead stream. Without this, a
+  // healthy tab + alt-tab would re-render the message list on every focus.
+  const wasHiddenRef = useRef(false);
 
   // Computed streaming state for current active thread
   const activeStreamContent = (currentThreadId && activeStreams[currentThreadId]?.streamContent) || '';
@@ -201,7 +205,13 @@ export function ChatProvider({ children }) {
   const openSessionStream = useCallback((threadId, sessionEventHandler) => {
     if (!threadId) return null;
     const existing = sessionStreamRef.current[threadId];
-    if (existing) {
+    // ponytail: a CLOSED EventSource will never deliver events again. Detect and
+    // replace it. Without this, a single network blip permanently breaks the
+    // session — error fires, browser gives up, FE never sees new messages.
+    if (existing && existing.streamManager?.es?.readyState === EventSource.CLOSED) {
+      try { existing.unsubscribe(); existing.streamManager.close(); } catch (_) {}
+      delete sessionStreamRef.current[threadId];
+    } else if (existing) {
       // If a different handler was registered, swap it.
       if (existing.unsubscribe) existing.unsubscribe();
       const unsub = existing.streamManager.subscribe(sessionEventHandler);
@@ -768,6 +778,10 @@ export function ChatProvider({ children }) {
 
   // Close Tab
   const closeTab = useCallback((threadIdToClose) => {
+    // ponytail: tear down the EventSource for the closed tab so it can't fire
+    // errors into a dead handler later. Without this, closing a streaming tab
+    // leaks the source and triggers "EventSource error" on subsequent switches.
+    closeSessionStream(threadIdToClose);
     setOpenTabs((prevTabs) => {
       const idx = prevTabs.findIndex((t) => t.threadId === threadIdToClose);
       if (idx === -1) return prevTabs;
@@ -788,7 +802,7 @@ export function ChatProvider({ children }) {
       }
       return nextTabs;
     });
-  }, [currentThreadId, selectSession, startNewChat]);
+  }, [closeSessionStream, currentThreadId, selectSession, startNewChat]);
 
   // Close every tab except `keepThreadId`. If the kept tab isn't the active one,
   // switch the active session to it.
@@ -1030,6 +1044,11 @@ export function ChatProvider({ children }) {
     if (event === 'heartbeat') return;
 
     if (event === 'error') {
+      // ponytail: a fatal error means the EventSource is CLOSED and the browser
+      // will not reconnect. openSessionStream recreates it on the next sendMessage,
+      // and sendMessage clears errorMessage — so showing the banner here is just
+      // noise for a connection the user can't manually recover. Suppress it.
+      if (data.fatal) return;
       setErrorMessage(data.message || 'Stream processing failed');
       return;
     }
@@ -1263,6 +1282,62 @@ export function ChatProvider({ children }) {
   useEffect(() => {
     sidebarRefreshedForRef.current = new Set();
   }, [activeProjectId]);
+
+  // ponytail: when the tab comes back to the front, dead EventSources must be
+  // recreated (iOS Safari + long background = CLOSED, browser will not auto-
+  // reconnect) and a messages-API catch-up fills any gap older than the
+  // 2000-event ring buffer. The Last-Event-ID header handles events still in
+  // the buffer; this handler handles the buffer-exhausted case + the case
+  // where the browser gave up on reconnecting entirely.
+  useEffect(() => {
+    const onVis = () => {
+      const nowVisible = document.visibilityState === 'visible';
+      if (!nowVisible) {
+        wasHiddenRef.current = true;
+        return;
+      }
+      if (!wasHiddenRef.current) return; // first mount or already visible
+      wasHiddenRef.current = false;
+
+      let anyDead = false;
+      for (const threadId of Object.keys(sessionStreamRef.current)) {
+        const handle = sessionStreamRef.current[threadId];
+        const es = handle?.streamManager?.es;
+        if (!es) continue;
+        // CONNECTING = browser is auto-retrying, leave it (Last-Event-ID will
+        //              fire when the reconnect lands).
+        // OPEN = live, no action.
+        // CLOSED = browser gave up. Recreate with a no-op handler for
+        //          backgrounded tabs (their state is refilled by selectSession
+        //          on focus). The active tab's handler is registered separately.
+        if (es.readyState === EventSource.CLOSED) {
+          anyDead = true;
+          openSessionStream(threadId, () => {
+            // ponytail: no-op on purpose. Backgrounded-tab state is refilled
+            // by selectSession's history load when the user switches to it;
+            // writing here would race the active tab's reducer.
+          });
+        } else if (es.readyState === EventSource.CONNECTING) {
+          // ponytail: count as unhealthy — the user may have been away long
+          // enough for the ring buffer to wrap, so the catch-up still runs.
+          anyDead = true;
+        }
+      }
+
+      // Catch-up for the active tab. Covers events older than the buffer.
+      // Idempotent: reducer dedupes by content; server returns full history.
+      if (anyDead && currentThreadId) {
+        fetchSessionMessages(currentThreadId, activeProjectId, null, 50)
+          .then((data) => {
+            if (!data?.messages) return;
+            setMessages((prev) => ({ ...prev, [currentThreadId]: data.messages }));
+          })
+          .catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [openSessionStream, currentThreadId, activeProjectId]);
 
   const value = {
     projects,
