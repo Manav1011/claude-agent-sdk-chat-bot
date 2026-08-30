@@ -1414,12 +1414,18 @@ async def session_events(session_id: str, workspace: str = Query(...), request: 
     print(session_id, workspace)
     async def stream():
         try:
-            # Replay buffered events missed during the disconnect window.
-            # O(n) at n=2000 — sub-millisecond, no indexing needed.
-            for eid, ev in list(loop._event_buffer):
-                if last_id_int < eid <= buffer_high:
-                    print(f"[REPLAY] {session_id} sending {eid}", flush=True)
-                    yield format_sse("message", ev, event_id=eid)
+            # ponytail: replay is for reconnect, not fresh connect. The browser's
+            # EventSource auto-sets Last-Event-ID on auto-reconnect (network blip,
+            # temporary drop) — that's the case replay exists for. A fresh page
+            # load (or a new tab opening the events endpoint directly) sends no
+            # Last-Event-ID, and replaying the whole buffer would just duplicate
+            # the conversation the FE already loaded from /messages. Skip the
+            # replay loop when there's no cursor.
+            if last_id_int > 0:
+                for eid, ev in list(loop._event_buffer):
+                    if last_id_int < eid <= buffer_high:
+                        print(f"[REPLAY] {session_id} sending {eid}", flush=True)
+                        yield format_sse("message", ev, event_id=eid)
             # Live tail: anything broadcast after the buffer_high snapshot.
             while True:
                 try:
