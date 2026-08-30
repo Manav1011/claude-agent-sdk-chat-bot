@@ -108,12 +108,6 @@ export default function ChatInput() {
   // silently hidden until then.
   const paletteMatch = inputText.match(/^\/(\S*)$/);
   const paletteOpen = Boolean(paletteMatch) && (currentCommands || []).length > 0;
-  if (paletteMatch && !paletteOpen) {
-    // ponytail: diagnostic — surfaces in DevTools Console when user types
-    // / but the popover doesn't open. Tells us whether the FE has commands
-    // for the active session.
-    console.log('[palette] / detected but not open. currentThreadId =', currentThreadId, 'currentCommands.length =', (currentCommands || []).length);
-  }
   const paletteQuery = paletteMatch ? paletteMatch[1].toLowerCase() : '';
   const filteredCommands = paletteOpen
     ? (currentCommands || []).filter(

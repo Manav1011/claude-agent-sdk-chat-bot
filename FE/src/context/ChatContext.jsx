@@ -1094,7 +1094,6 @@ export function ChatProvider({ children }) {
       // ponytail: replace, don't merge. The BE broadcasts the full list once
       // per session, so any prior list for this session is stale (e.g. the
       // user created a new session with the same UUID by reloading).
-      console.log('[palette] commands_available received:', data.commands?.length, 'commands for', sessionThreadId);
       setCommands((prev) => ({ ...prev, [sessionThreadId]: data.commands || [] }));
       return;
     }
@@ -1315,7 +1314,6 @@ export function ChatProvider({ children }) {
   // handler if the SSE is already open, replaces it if CLOSED) so this is
   // safe to fire on every currentThreadId change.
   useEffect(() => {
-    console.log('[palette] useEffect fires, currentThreadId =', currentThreadId);
     if (!currentThreadId) return;
     openSessionStream(currentThreadId, (parsed) => _handleSessionEvent(currentThreadId, parsed));
   }, [currentThreadId, openSessionStream, _handleSessionEvent]);

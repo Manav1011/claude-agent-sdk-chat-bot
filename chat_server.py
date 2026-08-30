@@ -237,6 +237,49 @@ class SessionLoop:
         # covers the resulting gap (reducer dedupes).
         self._event_seq: int = 0
         self._event_buffer: collections.deque = collections.deque(maxlen=2000)
+        # ponytail: cache of the SDK's slash command list, populated by
+        # ensure_commands_broadcast(). The slash palette is a UI expectation
+        # on session open (before the first user turn), so the cache is
+        # populated eagerly on SSE connect, not lazily on first message.
+        self._cached_commands: list | None = None
+
+    async def _commands_from_client(self, client) -> list:
+        # ponytail: shared extractor — used by both the SSE-open broadcast
+        # and the per-turn re-broadcast in _loop_body. Pure read of the
+        # SDK's cached _initialization_result, no extra round-trip.
+        try:
+            info = await client.get_server_info()
+        except Exception as e:
+            print(f"[WARN] get_server_info failed: {e}")
+            return []
+        if not info or not isinstance(info.get("commands"), list):
+            return []
+        return [
+            {
+                "name": c.get("name"),
+                "description": c.get("description", "") or "",
+                "argumentHint": c.get("argumentHint", "") or "",
+            }
+            for c in info["commands"]
+            if c.get("name")
+        ]
+
+    async def ensure_commands_broadcast(self):
+        # ponytail: SSE-open entry point. The slash-command palette is a
+        # page-load expectation — users type `/` to discover commands, not
+        # after sending a first message. So we broadcast the list on every
+        # SSE connect, not only inside _loop_body. If the SDK client hasn't
+        # been built yet (no first turn), we build it eagerly and stash it
+        # on self._client; the loop body reuses it, only rebuilding on a
+        # real permission_mode change. Idempotent — cached list is reused.
+        if self._cached_commands is not None:
+            await self._broadcast({"type": "commands_available", "commands": self._cached_commands})
+            return
+        if self._client is None:
+            self._client = await self._build_client(None)
+        self._cached_commands = await self._commands_from_client(self._client)
+        if self._cached_commands:
+            await self._broadcast({"type": "commands_available", "commands": self._cached_commands})
 
     def _touch(self):
         self._last_activity = asyncio.get_event_loop().time()
@@ -466,31 +509,11 @@ class SessionLoop:
                 print(f"[PERM] {self.session_id} fe_mode={target_mode!r} -> respawn")
                 self._client = await self._build_client(target_mode)
             self._current_permission_mode = target_mode
-            # ponytail: broadcast the SDK's command surface on every turn so
-            # FE SSE reconnects (page reload, new tab) that skip the BE's
-            # replay buffer still get the list. get_server_info() returns the
-            # cached _initialization_result — no extra round-trip — and the
-            # FE reducer replaces rather than merges, so re-broadcasts are
-            # idempotent. We do it here (not in _build_client) so we don't
-            # pay it on _build_options-only paths.
-            if self._client is not None:
-                try:
-                    info = await self._client.get_server_info()
-                    if info and isinstance(info.get("commands"), list):
-                        await self._broadcast({
-                            "type": "commands_available",
-                            "commands": [
-                                {
-                                    "name": c.get("name"),
-                                    "description": c.get("description", "") or "",
-                                    "argumentHint": c.get("argumentHint", "") or "",
-                                }
-                                for c in info["commands"]
-                                if c.get("name")
-                            ],
-                        })
-                except Exception as e:
-                    print(f"[WARN] get_server_info failed: {e}")
+            # ponytail: re-broadcast the SDK's command surface every turn so
+            # FE SSE reconnects that skip the replay buffer still get the
+            # list. ensure_commands_broadcast is idempotent (cached list
+            # reused) — re-broadcasts are cheap and safe.
+            await self.ensure_commands_broadcast()
             # Reset per-turn state so each enqueued user message starts fresh.
             self._pending_tools = {}
             self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
@@ -1444,6 +1467,14 @@ async def session_events(session_id: str, workspace: str = Query(...), request: 
     # scan is bounded by id <= buffer_high, the live tail is id > buffer_high).
     # No overlap, no gap, no lock needed in single-threaded asyncio.
     sub_q = loop.subscribe()
+    # ponytail: slash palette is a page-load expectation. Broadcast the SDK's
+    # command list as soon as the SSE connects, so typing `/` in a fresh
+    # session (no first turn yet) still shows the popover. MUST run AFTER
+    # subscribe — fresh connections don't replay, so a pre-subscribe
+    # broadcast lands in the buffer but the new sub_q never sees it.
+    # Idempotent: ensure_commands_broadcast caches the list, so replays and
+    # reconnects are O(1).
+    await loop.ensure_commands_broadcast()
     buffer_high = loop._event_seq
     print(session_id, workspace)
     async def stream():
