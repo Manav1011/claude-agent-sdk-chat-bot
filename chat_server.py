@@ -530,6 +530,15 @@ class SessionLoop:
         Yields zero or more legacy event dicts."""
         # AssistantMessage — final text/thinking content for this turn (e.g. "API Error: ..."
         # arrives as AssistantMessage, not StreamEvent delta — stream it so FE sees it live).
+        from claude_agent_sdk import SystemMessage
+        if isinstance(sdk_event, SystemMessage):
+            # ponytail: the SDK yields a system/init SystemMessage at session
+            # start. Its data.slash_commands duplicates what get_server_info()
+            # already gave us (Task 1), and the description/argumentHint info
+            # isn't present here, so we don't re-broadcast. We just need the
+            # translator to acknowledge the type so a future subtype that
+            # we DO care about doesn't fall through to the unhandled tail.
+            return
         from claude_agent_sdk import AssistantMessage, TextBlock
         if isinstance(sdk_event, AssistantMessage):
             # Only emit TextBlock from AssistantMessage when it looks like an error —
