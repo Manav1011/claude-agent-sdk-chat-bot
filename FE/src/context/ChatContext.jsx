@@ -50,6 +50,12 @@ export function ChatProvider({ children }) {
   });
   const [messages, setMessages] = useState({});
   const [sessionCursors, setSessionCursors] = useState({});
+  // ponytail: per-session SDK command list. Populated once when the BE
+  // broadcasts commands_available (Task 1). The list is fixed for the
+  // session's lifetime — settings changes don't re-fetch because the SDK
+  // locks setting_sources/skills on the first message and permission_mode
+  // doesn't gate commands. Reading components re-derive filtered views.
+  const [commands, setCommands] = useState({});
   const [isLoadingOlder, setIsLoadingOlder] = useState({});
   const [isSelectingSession, setIsSelectingSession] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
@@ -1084,6 +1090,13 @@ export function ChatProvider({ children }) {
       }
     }
 
+    if (data.type === 'commands_available') {
+      // ponytail: replace, don't merge. The BE broadcasts the full list once
+      // per session, so any prior list for this session is stale (e.g. the
+      // user created a new session with the same UUID by reloading).
+      setCommands((prev) => ({ ...prev, [sessionThreadId]: data.commands || [] }));
+      return;
+    }
     if (data.type === 'context_usage') {
       setContextUsage(data.data);
       return;
@@ -1453,6 +1466,8 @@ export function ChatProvider({ children }) {
     pendingPermissions,
     respondToPermission,
     refreshPendingPermissions,
+    commands,  // { [threadId]: [{name, description, argumentHint}] } — the raw map
+    currentCommands: commands[currentThreadId] || [],  // selector for the active session
   };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
