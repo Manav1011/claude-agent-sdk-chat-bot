@@ -23,7 +23,7 @@ function fileToBase64Image(file) {
 }
 
 export default function ChatInput() {
-  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode, currentCommands } = useChat();
+  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode, currentCommands, currentThreadId } = useChat();
   const [inputText, setInputText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -108,6 +108,12 @@ export default function ChatInput() {
   // silently hidden until then.
   const paletteMatch = inputText.match(/^\/(\S*)$/);
   const paletteOpen = Boolean(paletteMatch) && (currentCommands || []).length > 0;
+  if (paletteMatch && !paletteOpen) {
+    // ponytail: diagnostic — surfaces in DevTools Console when user types
+    // / but the popover doesn't open. Tells us whether the FE has commands
+    // for the active session.
+    console.log('[palette] / detected but not open. currentThreadId =', currentThreadId, 'currentCommands.length =', (currentCommands || []).length);
+  }
   const paletteQuery = paletteMatch ? paletteMatch[1].toLowerCase() : '';
   const filteredCommands = paletteOpen
     ? (currentCommands || []).filter(

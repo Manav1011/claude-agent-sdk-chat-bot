@@ -1315,6 +1315,7 @@ export function ChatProvider({ children }) {
   // handler if the SSE is already open, replaces it if CLOSED) so this is
   // safe to fire on every currentThreadId change.
   useEffect(() => {
+    console.log('[palette] useEffect fires, currentThreadId =', currentThreadId);
     if (!currentThreadId) return;
     openSessionStream(currentThreadId, (parsed) => _handleSessionEvent(currentThreadId, parsed));
   }, [currentThreadId, openSessionStream, _handleSessionEvent]);
