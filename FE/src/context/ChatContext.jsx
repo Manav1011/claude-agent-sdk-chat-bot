@@ -696,12 +696,26 @@ export function ChatProvider({ children }) {
     stopSpeechAudio();
     setErrorMessage(null);
     setContextUsage(null);
-    setCurrentThread(null);
+    // ponytail: assign a UUID eagerly. sendMessage did this lazily on first
+    // send, but the slash-command palette needs the SSE open before the user
+    // types `/` — which means currentThreadId must be non-null the moment
+    // the new tab is selected. We reuse the same getRandomValues fallback
+    // sendMessage uses, in case the browser blocks randomUUID in a non-
+    // secure context.
+    const newThreadId = (crypto.randomUUID && crypto.randomUUID())
+      // eslint-disable-next-line no-bitwise
+      || ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+          (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c/4).toString(16));
+    setCurrentThread(newThreadId);
 
     setOpenTabs((prev) => {
       const hasNull = prev.some((t) => t.threadId === null);
-      if (hasNull) return prev;
-      return [...prev, { threadId: null, projectId: targetProjId, title: 'New Conversation' }];
+      if (hasNull) {
+        // ponytail: upgrade the existing null tab to the new UUID so we
+        // don't end up with two tabs sharing the same session.
+        return prev.map((t) => (t.threadId === null ? { ...t, threadId: newThreadId, projectId: targetProjId } : t));
+      }
+      return [...prev, { threadId: newThreadId, projectId: targetProjId, title: 'New Conversation' }];
     });
   }, [stopSpeechAudio, setCurrentThread, activeProjectId]);
 

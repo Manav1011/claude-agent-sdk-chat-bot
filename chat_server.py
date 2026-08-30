@@ -183,6 +183,14 @@ for _route, _mime in _PWA_SHELL.items():
 _WORKSPACE_CLIENTS: dict[str, ClaudeSDKClient] = {}
 _cache_lock = asyncio.Lock()
 _session_locks: dict[str, asyncio.Lock] = {}
+# ponytail: per-workspace slash-command cache. The SDK's command surface is
+# workspace-invariant (same SDK + same setting_sources ⇒ same list), so the
+# first session to broadcast in a workspace populates this and every
+# subsequent session reads it on SSE-connect without paying for another
+# `get_server_info()`. Without this, a brand-new chat takes 1-2s to show
+# the slash palette (SDK subprocess cold start) while the user has already
+# typed `/`.
+_WORKSPACE_COMMANDS_CACHE: dict[str, list] = {}
 
 # Per-session background-task registry for true streaming-input mode
 _SESSION_REGISTRY: dict[str, "SessionLoop"] = {}
@@ -268,18 +276,25 @@ class SessionLoop:
         # ponytail: SSE-open entry point. The slash-command palette is a
         # page-load expectation — users type `/` to discover commands, not
         # after sending a first message. So we broadcast the list on every
-        # SSE connect, not only inside _loop_body. If the SDK client hasn't
-        # been built yet (no first turn), we build it eagerly and stash it
-        # on self._client; the loop body reuses it, only rebuilding on a
-        # real permission_mode change. Idempotent — cached list is reused.
-        if self._cached_commands is not None:
-            await self._broadcast({"type": "commands_available", "commands": self._cached_commands})
+        # SSE connect, not only inside _loop_body. The SDK's command
+        # surface is workspace-invariant, so we read from a workspace-level
+        # cache first; cold workspaces pay for one `get_server_info()`
+        # (which forces an SDK subprocess build on the first session) and
+        # every subsequent session in the same workspace is O(1). If no
+        # SDK client has been built yet, we build it eagerly and stash it
+        # on self._client; the loop body reuses it. Idempotent.
+        cached = _WORKSPACE_COMMANDS_CACHE.get(self.workspace)
+        if cached is not None:
+            self._cached_commands = cached
+            await self._broadcast({"type": "commands_available", "commands": cached})
             return
         if self._client is None:
             self._client = await self._build_client(None)
-        self._cached_commands = await self._commands_from_client(self._client)
-        if self._cached_commands:
-            await self._broadcast({"type": "commands_available", "commands": self._cached_commands})
+        cmds = await self._commands_from_client(self._client)
+        if cmds:
+            _WORKSPACE_COMMANDS_CACHE[self.workspace] = cmds
+            self._cached_commands = cmds
+            await self._broadcast({"type": "commands_available", "commands": cmds})
 
     def _touch(self):
         self._last_activity = asyncio.get_event_loop().time()
