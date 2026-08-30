@@ -226,7 +226,6 @@ export function ChatProvider({ children }) {
   // The sessionEventHandler closure wires incoming events into React state.
   const openSessionStream = useCallback((threadId, sessionEventHandler) => {
     if (!threadId) return null;
-    console.log('[palette] openSessionStream for', threadId);
     const existing = sessionStreamRef.current[threadId];
     // ponytail: a CLOSED EventSource will never deliver events again. Detect and
     // replace it. Without this, a single network blip permanently breaks the
@@ -797,13 +796,7 @@ export function ChatProvider({ children }) {
         setIsSelectingSession(false);
       }, 150);
     }
-    // ponytail: open the SSE as soon as the user lands on a session, not
-    // only when they send a message. The BE broadcasts commands_available
-    // on the first message, so the SSE must already be subscribed for the
-    // FE to receive it. openSessionStream is idempotent (it swaps the
-    // handler if the SSE is already open) so this is safe on every switch.
-    openSessionStream(threadId, (parsed) => _handleSessionEvent(threadId, parsed));
-  }, [activeProjectId, stopSpeechAudio, setCurrentThread, refreshPendingPermissions, messages, activeStreams, projectSessions, openSessionStream, _handleSessionEvent]);
+  }, [activeProjectId, stopSpeechAudio, setCurrentThread, refreshPendingPermissions, messages, activeStreams, projectSessions]);
 
   // Close Tab
   const closeTab = useCallback((threadIdToClose) => {
@@ -1314,6 +1307,17 @@ export function ChatProvider({ children }) {
   useEffect(() => {
     return () => closeAllSessionStreams();
   }, [closeAllSessionStreams]);
+
+  // ponytail: open the SSE whenever the active session changes, not only
+  // when the user sends a message. The BE broadcasts commands_available
+  // on the first message, so the SSE must already be subscribed for the
+  // FE to receive it. openSessionStream is idempotent (it swaps the
+  // handler if the SSE is already open, replaces it if CLOSED) so this is
+  // safe to fire on every currentThreadId change.
+  useEffect(() => {
+    if (!currentThreadId) return;
+    openSessionStream(currentThreadId, (parsed) => _handleSessionEvent(currentThreadId, parsed));
+  }, [currentThreadId, openSessionStream, _handleSessionEvent]);
 
   // ponytail: switching workspaces should re-arm the one-shot sidebar refresh.
   useEffect(() => {
