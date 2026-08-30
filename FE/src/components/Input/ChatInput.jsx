@@ -31,6 +31,10 @@ export default function ChatInput() {
   // has no whitespace yet (we don't autocomplete across words). selectedIndex
   // resets to 0 every time the query changes — the user always starts at the top.
   const [paletteSelected, setPaletteSelected] = useState(0);
+  // ponytail: ref map for command rows, so ↑/↓ can scroll the highlighted row
+  // into view. The popover is max-h-64 (≈8 visible rows) but there are ~91
+  // commands, so without this keyboard nav silently loses the user past row 8.
+  const buttonRefs = useRef({});
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -161,6 +165,15 @@ export default function ChatInput() {
   useEffect(() => {
     setPaletteSelected(0);
   }, [paletteQuery]);
+  // ponytail: keep the highlighted row in view as the user keyboard-navigates.
+  // `block: 'nearest'` is a no-op if the row is already visible, so this is
+  // cheap. Guarded on paletteOpen so we don't run scrollIntoView on a hidden
+  // listbox when no session has commands yet.
+  useEffect(() => {
+    if (!paletteOpen) return;
+    const cmd = filteredCommands[safeSelected];
+    if (cmd) buttonRefs.current[cmd.name]?.scrollIntoView({ block: 'nearest' });
+  }, [safeSelected, paletteOpen, filteredCommands]);
 
   const selectPaletteCommand = (cmd) => {
     if (!cmd) return;
@@ -325,6 +338,11 @@ export default function ChatInput() {
                     type="button"
                     role="option"
                     aria-selected={idx === safeSelected}
+                    ref={(el) => {
+                      // ponytail: store/clear so unmounted buttons don't leak.
+                      if (el) buttonRefs.current[cmd.name] = el;
+                      else delete buttonRefs.current[cmd.name];
+                    }}
                     onMouseDown={(e) => {
                       // ponytail: mousedown (not click) so the textarea doesn't
                       // lose focus before the state update lands.
