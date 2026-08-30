@@ -465,6 +465,29 @@ class SessionLoop:
                     self._client = None
                 print(f"[PERM] {self.session_id} fe_mode={target_mode!r} -> respawn")
                 self._client = await self._build_client(target_mode)
+                # ponytail: capture the SDK's full command surface once, right after
+                # the client connects. get_server_info() returns the cached
+                # _initialization_result (no extra round-trip), so this is cheap.
+                # We do it here (not in _build_client) so we don't pay it on
+                # _build_options-only paths and so a future respawn picks up
+                # commands from the freshly-connected client.
+                try:
+                    info = await self._client.get_server_info()
+                    if info and isinstance(info.get("commands"), list):
+                        await self._broadcast({
+                            "type": "commands_available",
+                            "commands": [
+                                {
+                                    "name": c.get("name"),
+                                    "description": c.get("description", "") or "",
+                                    "argumentHint": c.get("argumentHint", "") or "",
+                                }
+                                for c in info["commands"]
+                                if c.get("name")
+                            ],
+                        })
+                except Exception as e:
+                    print(f"[WARN] get_server_info failed: {e}")
             self._current_permission_mode = target_mode
             # Reset per-turn state so each enqueued user message starts fresh.
             self._pending_tools = {}
