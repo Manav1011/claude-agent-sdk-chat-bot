@@ -162,7 +162,46 @@ export default function ChatInput() {
     setPaletteSelected(0);
   }, [paletteQuery]);
 
+  const selectPaletteCommand = (cmd) => {
+    if (!cmd) return;
+    // ponytail: insert "/<name> " so the user can keep typing arguments.
+    // argumentHint (e.g. "(file path)") is not auto-inserted — it's a hint
+    // shown in the palette, not literal text. Trailing space matches the
+    // user-typed pattern (every command in their prompts ends with a space
+    // before its arg, or no arg at all).
+    setInputText(`/${cmd.name} `);
+    setPaletteSelected(0);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
   const handleKeyDown = (e) => {
+    if (paletteOpen && filteredCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setPaletteSelected((i) => Math.min(i + 1, filteredCommands.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPaletteSelected((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        selectPaletteCommand(filteredCommands[safeSelected]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        // ponytail: Esc strips the leading `/` so the palette closes. The
+        // remaining query text is kept — the user can keep typing without
+        // re-typing the slash. Next keystroke re-evaluates paletteOpen.
+        setInputText(inputText.replace(/^\/(\S*)$/, '$1'));
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       if (isMobileView()) {
         return; // On mobile, enter is a newline
@@ -265,6 +304,48 @@ export default function ChatInput() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+            </div>
+          )}
+
+          {/* Slash command palette — pops above the textarea when input starts with / */}
+          {paletteOpen && (
+            <div
+              role="listbox"
+              aria-label="Slash commands"
+              className="z-30 max-h-64 overflow-y-auto bg-dark-surface border border-dark-border rounded-xl shadow-2xl py-1"
+            >
+              {filteredCommands.length === 0 ? (
+                <div className="px-3 py-2 text-[11px] text-txt-subtle italic">
+                  No matching commands
+                </div>
+              ) : (
+                filteredCommands.map((cmd, idx) => (
+                  <button
+                    key={cmd.name}
+                    type="button"
+                    role="option"
+                    aria-selected={idx === safeSelected}
+                    onMouseDown={(e) => {
+                      // ponytail: mousedown (not click) so the textarea doesn't
+                      // lose focus before the state update lands.
+                      e.preventDefault();
+                      selectPaletteCommand(cmd);
+                    }}
+                    onMouseEnter={() => setPaletteSelected(idx)}
+                    className={`w-full text-left px-2.5 py-1.5 flex items-baseline gap-2 transition-colors cursor-pointer ${
+                      idx === safeSelected ? 'bg-brand/15 text-white' : 'text-txt-main hover:bg-dark-elevated'
+                    }`}
+                  >
+                    <span className="font-mono text-xs text-brand shrink-0">/{cmd.name}</span>
+                    {cmd.argumentHint ? (
+                      <span className="font-mono text-[10px] text-txt-subtle shrink-0">{cmd.argumentHint}</span>
+                    ) : null}
+                    <span className="text-[11px] text-txt-muted line-clamp-1 flex-1 min-w-0">
+                      {cmd.description}
+                    </span>
+                  </button>
+                ))
+              )}
             </div>
           )}
 
