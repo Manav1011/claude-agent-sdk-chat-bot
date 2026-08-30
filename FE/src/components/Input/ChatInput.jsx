@@ -23,10 +23,14 @@ function fileToBase64Image(file) {
 }
 
 export default function ChatInput() {
-  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode } = useChat();
+  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode, currentCommands } = useChat();
   const [inputText, setInputText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
+  // ponytail: slash-command palette. visible when input starts with `/` and
+  // has no whitespace yet (we don't autocomplete across words). selectedIndex
+  // resets to 0 every time the query changes — the user always starts at the top.
+  const [paletteSelected, setPaletteSelected] = useState(0);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -94,6 +98,25 @@ export default function ChatInput() {
 
   const hasText = inputText.trim().length > 0;
   const hasAttachments = attachments.length > 0;
+  // ponytail: derive palette visibility + filtered list from inputText.
+  // currentCommands is the per-session command list from ChatContext (Task 3);
+  // it's [] until the BE broadcasts commands_available, so the palette is
+  // silently hidden until then.
+  const paletteMatch = inputText.match(/^\/(\S*)$/);
+  const paletteOpen = Boolean(paletteMatch) && (currentCommands || []).length > 0;
+  const paletteQuery = paletteMatch ? paletteMatch[1].toLowerCase() : '';
+  const filteredCommands = paletteOpen
+    ? (currentCommands || []).filter(
+        (c) =>
+          c.name.toLowerCase().includes(paletteQuery) ||
+          (c.description || '').toLowerCase().includes(paletteQuery)
+      )
+    : [];
+  // ponytail: clamp selectedIndex when the filter result shrinks (e.g. user
+  // backspaces). Without this, arrow keys would land on a phantom row.
+  const safeSelected = filteredCommands.length === 0
+    ? 0
+    : Math.min(paletteSelected, filteredCommands.length - 1);
   const hasQuote = Boolean(replyQuote);
   const canSend = hasText || hasAttachments || hasQuote;
 
@@ -132,6 +155,12 @@ export default function ChatInput() {
       permissionMode,
     });
   };
+
+  // ponytail: reset palette selection whenever the query changes so the user
+  // always starts at the top of the (possibly narrower) filtered list.
+  useEffect(() => {
+    setPaletteSelected(0);
+  }, [paletteQuery]);
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
