@@ -22,14 +22,18 @@
   <body>
     <div id="root"></div>
     <script>
-      // ponytail: register SW only in production. Vite dev server has its own
-      // HMR service worker; mixing them in dev breaks hot reload.
+      // ponytail: register the PWA service worker. The .catch swallows a
+      // missing /sw.js in dev, where Vite serves its own assets; in prod
+      // the build emits one alongside index.html. The `import.meta.env`
+      // prod-guard used to live here, but Vite only rewrites that token
+      // inside <script type="module"> blocks — a plain inline script ships
+      // the literal to the browser, which throws SyntaxError and breaks
+      // the whole app. Unconditional register is safe: dev 404s, prod
+      // registers, both are silent.
       if ('serviceWorker' in navigator && location.protocol !== 'blob:') {
-        if (import.meta.env && import.meta.env.PROD) {
-          window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('SW register failed', e));
-          });
-        }
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
       }
     </script>
   </body>
