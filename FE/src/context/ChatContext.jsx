@@ -226,6 +226,7 @@ export function ChatProvider({ children }) {
   // The sessionEventHandler closure wires incoming events into React state.
   const openSessionStream = useCallback((threadId, sessionEventHandler) => {
     if (!threadId) return null;
+    console.log('[palette] openSessionStream for', threadId);
     const existing = sessionStreamRef.current[threadId];
     // ponytail: a CLOSED EventSource will never deliver events again. Detect and
     // replace it. Without this, a single network blip permanently breaks the
@@ -796,7 +797,13 @@ export function ChatProvider({ children }) {
         setIsSelectingSession(false);
       }, 150);
     }
-  }, [activeProjectId, stopSpeechAudio, setCurrentThread, refreshPendingPermissions, messages, activeStreams, projectSessions]);
+    // ponytail: open the SSE as soon as the user lands on a session, not
+    // only when they send a message. The BE broadcasts commands_available
+    // on the first message, so the SSE must already be subscribed for the
+    // FE to receive it. openSessionStream is idempotent (it swaps the
+    // handler if the SSE is already open) so this is safe on every switch.
+    openSessionStream(threadId, (parsed) => _handleSessionEvent(threadId, parsed));
+  }, [activeProjectId, stopSpeechAudio, setCurrentThread, refreshPendingPermissions, messages, activeStreams, projectSessions, openSessionStream, _handleSessionEvent]);
 
   // Close Tab
   const closeTab = useCallback((threadIdToClose) => {
@@ -1094,6 +1101,7 @@ export function ChatProvider({ children }) {
       // ponytail: replace, don't merge. The BE broadcasts the full list once
       // per session, so any prior list for this session is stale (e.g. the
       // user created a new session with the same UUID by reloading).
+      console.log('[palette] commands_available received:', data.commands?.length, 'commands for', sessionThreadId);
       setCommands((prev) => ({ ...prev, [sessionThreadId]: data.commands || [] }));
       return;
     }
