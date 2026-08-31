@@ -338,6 +338,61 @@ class SessionLoop:
             self._cached_commands = cmds
             await self._broadcast({"type": "commands_available", "commands": cmds})
 
+    async def rebuild_with_settings(
+        self,
+        setting_sources: list | None,
+        skills: list | Literal["all"] | None,
+        permission_mode: str | None,
+    ) -> None:
+        # ponytail: same shape as the permission-mode respawn in _loop_body,
+        # generalized for any setting change. _build_client with explicit
+        # overrides bypasses _locked_settings so the new scope applies even
+        # before the first message locks anything in. --resume (inside
+        # _build_client) keeps the JSONL conversation continuous; the agent's
+        # in-memory state is lost, but the next user message re-sees the
+        # full history.
+        #
+        # Order matters: build the new client BEFORE disconnecting the old
+        # one. If the new build fails, the old client is still in place and
+        # the session stays usable. A failed disconnect with a half-built
+        # replacement would brick the session until the next message retry.
+        if setting_sources == []:
+            setting_sources = None
+        if skills == []:
+            skills = None
+        mode = permission_mode if permission_mode is not None else self._current_permission_mode
+        new_client = await self._build_client(
+            mode,
+            setting_sources=setting_sources,
+            skills=skills,
+        )
+        old_client = self._client
+        self._client = new_client
+        # Lock the new settings so the next message uses the same scope.
+        # _loop_body's per-turn re-broadcast reads from _locked_settings,
+        # so updating it here keeps the safety-net broadcast in sync.
+        self._locked_settings = {
+            "setting_sources": setting_sources,
+            "skills": skills,
+        }
+        self._current_permission_mode = mode
+        if old_client is not None:
+            try:
+                await old_client.disconnect()
+            except Exception as e:
+                print(f"[WARN] old client disconnect failed during rebuild: {e}")
+        # Broadcast the fresh command list for the new scope. Cache hit
+        # if another session in the same (workspace, scope) already paid
+        # the SDK init cost; miss otherwise (~2s).
+        await self.ensure_commands_broadcast(
+            setting_sources=setting_sources,
+            skills=skills,
+        )
+        print(
+            f"[REBUILD] {self.session_id} setting_sources={setting_sources} "
+            f"skills={skills} permission_mode={mode!r}"
+        )
+
     def _touch(self):
         self._last_activity = asyncio.get_event_loop().time()
 
