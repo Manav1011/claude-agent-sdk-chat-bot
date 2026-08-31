@@ -23,7 +23,7 @@ function fileToBase64Image(file) {
 }
 
 export default function ChatInput() {
-  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode, currentCommands, currentThreadId } = useChat();
+  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode, currentCommands, currentThreadId, rebuilding } = useChat();
   const [inputText, setInputText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -116,6 +116,7 @@ export default function ChatInput() {
           (c.description || '').toLowerCase().includes(paletteQuery)
       )
     : [];
+  const isRebuilding = Boolean(currentThreadId && rebuilding[currentThreadId]);
   // ponytail: clamp selectedIndex when the filter result shrinks (e.g. user
   // backspaces). Without this, arrow keys would land on a phantom row.
   const safeSelected = filteredCommands.length === 0
@@ -320,6 +321,26 @@ export default function ChatInput() {
             </div>
           )}
 
+          {/* Rebuild indicator — shown while a settings change is reinitializing
+              the active session's SDK client. Clears on the next commands_available
+              broadcast (handled in ChatContext) or after the 6s safety timeout. */}
+          {isRebuilding && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-brand/10 border border-brand/30 text-[11px] text-txt-muted"
+            >
+              <svg
+                className="w-3 h-3 animate-spin text-brand"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" strokeDasharray="42 20" />
+              </svg>
+              <span>Reinitializing session…</span>
+            </div>
+          )}
           {/* Slash command palette — pops above the textarea when input starts with / */}
           {paletteOpen && (
             <div
