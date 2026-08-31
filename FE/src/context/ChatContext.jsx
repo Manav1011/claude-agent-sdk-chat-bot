@@ -11,6 +11,7 @@ import {
   submitPermissionDecision,
   sendSessionMessage,
   interruptSession,
+  rebuildSessionSettings,
   createSessionEventSource,
 } from '../utils/api';
 
@@ -85,6 +86,32 @@ export function ChatProvider({ children }) {
   const [permissionMode, setPermissionMode] = useState(() => {
     return localStorage.getItem('qa-permission-mode') || null;
   });
+  // ponytail: { [threadId]: boolean } — true while a rebuild POST is in flight
+  // for that session. The indicator in ChatInput reads `rebuilding[currentThreadId]`.
+  const [rebuilding, setRebuilding] = useState({});
+  // ponytail: per-thread debounce timer. Multiple rapid settings changes
+  // (e.g. toggling three scopes) collapse into one rebuild 400ms after the
+  // last change. Without this, each toggle pays a 2s SDK init.
+  const rebuildTimersRef = useRef({});
+
+  // ponytail: safety net. If the rebuild POST succeeds but the
+  // commands_available broadcast is lost (network blip, client crash),
+  // the indicator would stick forever. Clear it 6s after the POST resolved.
+  useEffect(() => {
+    const stuck = Object.entries(rebuilding)
+      .filter(([, v]) => v)
+      .map(([tid]) => tid);
+    if (stuck.length === 0) return;
+    const t = setTimeout(() => {
+      setRebuilding((prev) => {
+        const next = { ...prev };
+        stuck.forEach((tid) => { next[tid] = false; });
+        return next;
+      });
+    }, 6000);
+    return () => clearTimeout(t);
+  }, [rebuilding]);
+
   const [expandThoughts, setExpandThoughts] = useState(() => {
     return localStorage.getItem('qa-expand-thoughts') === 'true';
   });
@@ -270,6 +297,50 @@ export function ChatProvider({ children }) {
     } catch (_) {}
     delete sessionStreamRef.current[threadId];
   }, []);
+
+  // ponytail: debounced settings-rebuild trigger. The four settings setters
+  // call this; it collapses rapid changes (one toggle, several scopes) into
+  // a single POST 400ms after the last change and aborts any in-flight POST
+  // so only the newest settings are applied. A no-op when there is no active
+  // session (no currentThreadId) — see the setters' call sites.
+  const rebuildSession = useCallback((threadId, settings) => {
+    if (!threadId) return;
+    const ws = getWorkspacePath();
+    if (!ws) return;
+    // ponytail: clear any pending timer for this thread so the new change
+    // resets the 400ms window. The previous scheduled call becomes a no-op
+    // (we cancel its in-flight AbortController via the signal).
+    const prev = rebuildTimersRef.current[threadId];
+    if (prev) {
+      clearTimeout(prev.timer);
+      prev.controller.abort();
+    }
+    const controller = new AbortController();
+    rebuildTimersRef.current[threadId] = { timer: null, controller };
+    rebuildTimersRef.current[threadId].timer = setTimeout(async () => {
+      setRebuilding((prev) => ({ ...prev, [threadId]: true }));
+      try {
+        await rebuildSessionSettings({
+          threadId,
+          workspace: ws,
+          settingSources: settings.settingSources,
+          skills: settings.skills,
+          permissionMode: settings.permissionMode,
+          signal: controller.signal,
+        });
+        // ponytail: don't clear `rebuilding` here — wait for the matching
+        // commands_available (next step). On error, fall through to the
+        // catch and clear so the indicator doesn't stick.
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          console.error('rebuildSession failed', e);
+          setRebuilding((prev) => ({ ...prev, [threadId]: false }));
+        }
+      } finally {
+        delete rebuildTimersRef.current[threadId];
+      }
+    }, 400);
+  }, [getWorkspacePath]);
 
   // Close all open session streams — for unmount or workspace switch.
   const closeAllSessionStreams = useCallback(() => {
@@ -1122,6 +1193,9 @@ export function ChatProvider({ children }) {
       // per session, so any prior list for this session is stale (e.g. the
       // user created a new session with the same UUID by reloading).
       setCommands((prev) => ({ ...prev, [sessionThreadId]: data.commands || [] }));
+      // ponytail: a fresh commands list is the BE's signal that the rebuild
+      // (if any) is complete. Clear the indicator so the user can type.
+      setRebuilding((prev) => (prev[sessionThreadId] ? { ...prev, [sessionThreadId]: false } : prev));
       return;
     }
     if (data.type === 'context_usage') {
@@ -1433,6 +1507,8 @@ export function ChatProvider({ children }) {
     skillsMode,
     skillsList,
     permissionMode,
+    rebuilding,
+    rebuildSession,
     contextUsage,
     isStreaming,
     isAiResponding,

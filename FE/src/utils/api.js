@@ -123,6 +123,25 @@ export async function interruptSession({ threadId, workspace }) {
   return res.json();
 }
 
+export async function rebuildSessionSettings({ threadId, workspace, settingSources, skills, permissionMode, signal }) {
+  const res = await fetch(`/api/sessions/${threadId}/settings?workspace=${encodeURIComponent(workspace)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      content: '',  // unused; the body shape matches sendSessionMessage
+      setting_sources: settingSources ?? null,
+      skills: skills ?? null,
+      permission_mode: permissionMode ?? null,
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to rebuild session (${res.status})`);
+  }
+  return res.json();
+}
+
 // Creates a long-lived EventSource that yields {event, data} dicts as
 // parsed SSE messages from the backend SessionLoop. Caller must call .close()
 // on the returned EventSource to unsubscribe. `settingSources` is JSON-encoded
