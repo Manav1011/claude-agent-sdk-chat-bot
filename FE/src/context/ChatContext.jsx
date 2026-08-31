@@ -65,7 +65,7 @@ export function ChatProvider({ children }) {
   const [speechExplanation, setSpeechExplanation] = useState(() => {
     return localStorage.getItem('qa-speech-explanation') === 'true';
   });
-  const [settingSources, setSettingSources] = useState(getInitialSettingSources);
+  const [settingSources, setSettingSourcesState] = useState(getInitialSettingSources);
   // ponytail: mirror settingSources into a ref so openSessionStream (wrapped in
   // useCallback with stable deps) can read the latest value at SSE-open time
   // without re-running on every settings change — that would tear down and
@@ -1532,23 +1532,54 @@ export function ChatProvider({ children }) {
       localStorage.setItem('qa-speech-explanation', String(val));
     },
     setSettingSources: (val) => {
-      setSettingSources(val);
+      setSettingSourcesState(val);
+      settingSourcesRef.current = val;
       if (!val) localStorage.removeItem('qa-setting-sources');
       else if (val.includes('user')) localStorage.setItem('qa-setting-sources', 'user');
       else if (val.includes('local')) localStorage.setItem('qa-setting-sources', 'local');
+      // ponytail: fire a debounced rebuild for the active session only.
+      // rebuildSession is a no-op when there is no currentThreadId.
+      const skillsForRebuild = skillsMode === 'all' ? 'all' : skillsList;
+      rebuildSession(currentThreadId, {
+        settingSources: val,
+        skills: skillsForRebuild,
+        permissionMode,
+      });
     },
     setSkillsMode: (val) => {
       setSkillsMode(val);
       localStorage.setItem('qa-skills-mode', val);
+      const skillsForRebuild = val === 'all' ? 'all' : skillsList;
+      rebuildSession(currentThreadId, {
+        settingSources: settingSourcesRef.current,
+        skills: skillsForRebuild,
+        permissionMode,
+      });
     },
     setSkillsList: (val) => {
       setSkillsList(val);
       localStorage.setItem('qa-skills-list', JSON.stringify(val));
+      // ponytail: list changes only matter when skillsMode is 'custom';
+      // for 'all'/'default'/'none' the SDK's value is fixed. We still
+      // pass the list so the rebuild is correct when the user is editing
+      // a custom list.
+      const skillsForRebuild = skillsMode === 'all' ? 'all' : val;
+      rebuildSession(currentThreadId, {
+        settingSources: settingSourcesRef.current,
+        skills: skillsForRebuild,
+        permissionMode,
+      });
     },
     setPermissionMode: (val) => {
       setPermissionMode(val);
       if (val) localStorage.setItem('qa-permission-mode', val);
       else localStorage.removeItem('qa-permission-mode');
+      const skillsForRebuild = skillsMode === 'all' ? 'all' : skillsList;
+      rebuildSession(currentThreadId, {
+        settingSources: settingSourcesRef.current,
+        skills: skillsForRebuild,
+        permissionMode: val,
+      });
     },
     expandThoughts,
     setExpandThoughts: (val) => {
