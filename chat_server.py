@@ -1588,6 +1588,42 @@ async def post_session_message(
     return {"status": "queued", "session_id": session_id}
 
 
+@app.post("/api/sessions/{session_id}/settings")
+async def post_session_settings(
+    session_id: str,
+    body: _UserMessage,
+    workspace: str = Query(...),
+):
+    # ponytail: same trust-boundary validation as post_session_message.
+    # The body carries setting_sources/skills/permission_mode; content/images
+    # are accepted but ignored — the request is configuration-only, not a
+    # user turn. Reusing _UserMessage avoids a near-duplicate model.
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="session_id must be a UUID")
+    print(
+        f"[FE_OPTS] rebuild {session_id} setting_sources={body.setting_sources} "
+        f"skills={body.skills} permission_mode={body.permission_mode}"
+    )
+    loop = await get_or_create_loop(workspace, session_id)
+    try:
+        await loop.rebuild_with_settings(
+            setting_sources=body.setting_sources,
+            skills=body.skills,
+            permission_mode=body.permission_mode,
+        )
+    except Exception as e:
+        # ponytail: rebuild is best-effort. If it fails, the loop is in
+        # whatever state _build_client left it in (probably unchanged —
+        # the old client is only swapped after a successful new build).
+        # Surface the error to the FE so it can show a toast and clear
+        # the "Reinitializing…" indicator; the session stays usable.
+        print(f"[ERROR] rebuild failed for {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Rebuild failed: {e}")
+    return {"status": "rebuilt", "session_id": session_id}
+
+
 @app.get("/api/sessions/{session_id}/events")
 async def session_events(
     session_id: str,
