@@ -125,9 +125,15 @@ export async function interruptSession({ threadId, workspace }) {
 
 // Creates a long-lived EventSource that yields {event, data} dicts as
 // parsed SSE messages from the backend SessionLoop. Caller must call .close()
-// on the returned EventSource to unsubscribe.
-export function createSessionEventSource({ threadId, workspace }) {
-  const url = `/api/sessions/${threadId}/events?workspace=${encodeURIComponent(workspace)}`;
+// on the returned EventSource to unsubscribe. `settingSources` is JSON-encoded
+// into the query so the BE can build the broadcast client with the same scope
+// the first user message will declare (palette == per-turn).
+export function createSessionEventSource({ threadId, workspace, settingSources = null }) {
+  const params = new URLSearchParams({ workspace });
+  if (Array.isArray(settingSources) && settingSources.length) {
+    params.set('setting_sources', JSON.stringify(settingSources));
+  }
+  const url = `/api/sessions/${threadId}/events?${params.toString()}`;
   const es = new EventSource(url);
 
   const subscribers = new Set();

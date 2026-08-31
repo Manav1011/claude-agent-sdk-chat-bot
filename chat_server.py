@@ -183,14 +183,38 @@ for _route, _mime in _PWA_SHELL.items():
 _WORKSPACE_CLIENTS: dict[str, ClaudeSDKClient] = {}
 _cache_lock = asyncio.Lock()
 _session_locks: dict[str, asyncio.Lock] = {}
-# ponytail: per-workspace slash-command cache. The SDK's command surface is
-# workspace-invariant (same SDK + same setting_sources ⇒ same list), so the
-# first session to broadcast in a workspace populates this and every
-# subsequent session reads it on SSE-connect without paying for another
-# `get_server_info()`. Without this, a brand-new chat takes 1-2s to show
-# the slash palette (SDK subprocess cold start) while the user has already
-# typed `/`.
-_WORKSPACE_COMMANDS_CACHE: dict[str, list] = {}
+# ponytail: per-(workspace, setting_sources) slash-command cache. The SDK's
+# command surface is invariant for a given scope, so the first session to
+# broadcast in a (workspace, scope) pair populates this and every subsequent
+# session with the same pair reads it on SSE-connect without paying for
+# another `get_server_info()`. Keyed by tuple(workspace, sorted(setting_sources))
+# — or (workspace, None) when the FE didn't declare a scope. Without the
+# per-scope key, a session that opened with `["user"]` would silently show
+# the cached `["local"]` list (or vice versa).
+_WORKSPACE_COMMANDS_CACHE: dict[tuple, list] = {}
+
+
+def _ss_cache_key(setting_sources: list | None) -> tuple | None:
+    """Hashable cache key for a setting_sources list. None ⇒ SDK defaults."""
+    if not setting_sources:
+        return None
+    return tuple(sorted(setting_sources))
+
+
+def _parse_setting_sources_query(raw: str | None) -> list | None:
+    """Parse the JSON-encoded `setting_sources` query string from the FE.
+    Returns None on any failure — invalid input falls back to SDK defaults
+    rather than 400-ing the SSE connect (EventSource can't recover from HTTP
+    errors gracefully)."""
+    if not raw:
+        return None
+    try:
+        v = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        return None
+    return v
 
 # Per-session background-task registry for true streaming-input mode
 _SESSION_REGISTRY: dict[str, "SessionLoop"] = {}
@@ -272,27 +296,45 @@ class SessionLoop:
             if c.get("name")
         ]
 
-    async def ensure_commands_broadcast(self):
+    async def ensure_commands_broadcast(
+        self,
+        setting_sources: list | None = None,
+        skills: list | Literal["all"] | None = None,
+    ):
         # ponytail: SSE-open entry point. The slash-command palette is a
         # page-load expectation — users type `/` to discover commands, not
         # after sending a first message. So we broadcast the list on every
-        # SSE connect, not only inside _loop_body. The SDK's command
-        # surface is workspace-invariant, so we read from a workspace-level
-        # cache first; cold workspaces pay for one `get_server_info()`
-        # (which forces an SDK subprocess build on the first session) and
-        # every subsequent session in the same workspace is O(1). If no
-        # SDK client has been built yet, we build it eagerly and stash it
-        # on self._client; the loop body reuses it. Idempotent.
-        cached = _WORKSPACE_COMMANDS_CACHE.get(self.workspace)
+        # SSE connect, not only inside _loop_body.
+        #
+        # The cache is keyed by (workspace, setting_sources) — NOT just
+        # workspace — because the SDK's command surface depends on which
+        # scopes are loaded. Two sessions in the same workspace with
+        # different setting_sources get different command lists; without
+        # per-scope keying, a session opened with `["user"]` would silently
+        # inherit the cached list from a previous `["local"]` session.
+        #
+        # The FE passes its current setting_sources on SSE-open (same value
+        # it stores in localStorage and will send on the first message), so
+        # the broadcast client is built with the SAME scope the per-turn
+        # client will be built with. When the first message arrives, the
+        # per-turn re-broadcast at the end of _loop_body re-validates with
+        # the locked settings (safety net for any drift between localStorage
+        # and the first message body).
+        cache_key = (self.workspace, _ss_cache_key(setting_sources))
+        cached = _WORKSPACE_COMMANDS_CACHE.get(cache_key)
         if cached is not None:
             self._cached_commands = cached
             await self._broadcast({"type": "commands_available", "commands": cached})
             return
         if self._client is None:
-            self._client = await self._build_client(None)
+            # Build with the FE's declared scope so the broadcast matches
+            # what the per-turn client will be built with on the first message.
+            self._client = await self._build_client(
+                None, setting_sources=setting_sources, skills=skills
+            )
         cmds = await self._commands_from_client(self._client)
         if cmds:
-            _WORKSPACE_COMMANDS_CACHE[self.workspace] = cmds
+            _WORKSPACE_COMMANDS_CACHE[cache_key] = cmds
             self._cached_commands = cmds
             await self._broadcast({"type": "commands_available", "commands": cmds})
 
@@ -467,21 +509,36 @@ class SessionLoop:
 
         return can_use_tool
 
-    async def _build_client(self, mode: str | None) -> ClaudeSDKClient:
+    async def _build_client(
+        self,
+        mode: str | None,
+        *,
+        setting_sources: list | None = None,
+        skills: list | Literal["all"] | None = None,
+    ) -> ClaudeSDKClient:
         # ponytail: build the SDK client for a specific FE mode. The toolset is
         # baked at launch — to switch modes live we disconnect this client and
         # reconnect with new options (see _loop_body). --resume carries the
         # same session_id through, so the Claude API session and JSONL file
         # stay continuous.
+        #
+        # setting_sources/skills overrides: if neither is passed, fall through
+        # to the locked settings captured on the first message. ensure_commands_broadcast
+        # passes explicit values so the broadcast client is built with the FE's
+        # declared scope BEFORE the first message locks anything in. After the
+        # first message, the per-turn rebuild uses _locked_settings.
+        if setting_sources is None and skills is None:
+            s = self._locked_settings or {}
+            setting_sources = s.get("setting_sources")
+            skills = s.get("skills")
         project_key = _sdk_project_key(self.workspace)
         jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{self.session_id}.jsonl"
-        s = self._locked_settings or {}
         opts = _build_options(
             workspace=self.workspace,
             session_id=self.session_id,
             resume=jsonl_path.exists(),
-            setting_sources=s.get("setting_sources"),
-            skills=s.get("skills"),
+            setting_sources=setting_sources,
+            skills=skills,
             permission_mode=mode,
         )
         client = ClaudeSDKClient(options=opts)
@@ -527,8 +584,16 @@ class SessionLoop:
             # ponytail: re-broadcast the SDK's command surface every turn so
             # FE SSE reconnects that skip the replay buffer still get the
             # list. ensure_commands_broadcast is idempotent (cached list
-            # reused) — re-broadcasts are cheap and safe.
-            await self.ensure_commands_broadcast()
+            # reused) — re-broadcasts are cheap and safe. We pass the
+            # LOCKED settings (not the SSE-open query value) so the cache
+            # key is keyed by what the per-turn client is actually running
+            # with, defending against any drift between localStorage and
+            # the first message body.
+            locked = self._locked_settings or {}
+            await self.ensure_commands_broadcast(
+                setting_sources=locked.get("setting_sources"),
+                skills=locked.get("skills"),
+            )
             # Reset per-turn state so each enqueued user message starts fresh.
             self._pending_tools = {}
             self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
@@ -573,11 +638,14 @@ class SessionLoop:
         from claude_agent_sdk import SystemMessage
         if isinstance(sdk_event, SystemMessage):
             # ponytail: the SDK yields a system/init SystemMessage at session
-            # start. Its data.slash_commands duplicates what get_server_info()
-            # already gave us (Task 1), and the description/argumentHint info
-            # isn't present here, so we don't re-broadcast. We just need the
-            # translator to acknowledge the type so a future subtype that
-            # we DO care about doesn't fall through to the unhandled tail.
+            # start. data.slash_commands is a list of bare command NAMES (no
+            # description, no argumentHint) — empirically verified against
+            # claude_agent_sdk 0.1.x. The rich {name, description, argumentHint}
+            # shape the palette needs comes from get_server_info() (the cached
+            # control-request response), not from this system message. So we
+            # deliberately don't broadcast. The translator still needs to
+            # acknowledge the type so a future subtype that we DO care about
+            # doesn't fall through to the unhandled tail.
             return
         from claude_agent_sdk import AssistantMessage, TextBlock
         if isinstance(sdk_event, AssistantMessage):
@@ -1466,11 +1534,22 @@ async def post_session_message(
 
 
 @app.get("/api/sessions/{session_id}/events")
-async def session_events(session_id: str, workspace: str = Query(...), request: Request = None):
+async def session_events(
+    session_id: str,
+    workspace: str = Query(...),
+    setting_sources: str | None = Query(None),
+    request: Request = None,
+):
     try:
         uuid.UUID(session_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="session_id must be a UUID")
+    # ponytail: FE passes its current setting_sources (same value as localStorage
+    # and the first message body) so the broadcast client is built with the
+    # same scope the per-turn client will be built with. Invalid input falls
+    # back to None (SDK defaults) rather than 400-ing — EventSource can't
+    # recover from HTTP errors.
+    parsed_setting_sources = _parse_setting_sources_query(setting_sources)
     loop = await get_or_create_loop(workspace, session_id)
     # ponytail: Last-Event-ID is the SSE-spec replay cursor. EventSource sets it
     # automatically on reconnect when the prior stream emitted `id:` lines.
@@ -1489,7 +1568,7 @@ async def session_events(session_id: str, workspace: str = Query(...), request: 
     # broadcast lands in the buffer but the new sub_q never sees it.
     # Idempotent: ensure_commands_broadcast caches the list, so replays and
     # reconnects are O(1).
-    await loop.ensure_commands_broadcast()
+    await loop.ensure_commands_broadcast(setting_sources=parsed_setting_sources)
     buffer_high = loop._event_seq
     print(session_id, workspace)
     async def stream():

@@ -65,6 +65,12 @@ export function ChatProvider({ children }) {
     return localStorage.getItem('qa-speech-explanation') === 'true';
   });
   const [settingSources, setSettingSources] = useState(getInitialSettingSources);
+  // ponytail: mirror settingSources into a ref so openSessionStream (wrapped in
+  // useCallback with stable deps) can read the latest value at SSE-open time
+  // without re-running on every settings change — that would tear down and
+  // recreate every active EventSource.
+  const settingSourcesRef = useRef(settingSources);
+  useEffect(() => { settingSourcesRef.current = settingSources; }, [settingSources]);
   const [skillsMode, setSkillsMode] = useState(() => {
     const mode = localStorage.getItem('qa-skills-mode');
     return mode === 'all' ? 'default' : (mode || 'default');
@@ -224,6 +230,9 @@ export function ChatProvider({ children }) {
 
   // Open long-lived SSE for a session. Idempotent — returns the existing handle if already open.
   // The sessionEventHandler closure wires incoming events into React state.
+  // ponytail: settingSources is read from settingSourcesRef (not the dep array)
+  // so the latest user-configured scope is always sent on SSE-open without
+  // forcing openSessionStream to re-run when the user changes it.
   const openSessionStream = useCallback((threadId, sessionEventHandler) => {
     if (!threadId) return null;
     const existing = sessionStreamRef.current[threadId];
@@ -242,7 +251,11 @@ export function ChatProvider({ children }) {
     }
     const ws = getWorkspacePath();
     if (!ws) return null;
-    const streamManager = createSessionEventSource({ threadId, workspace: ws });
+    const streamManager = createSessionEventSource({
+      threadId,
+      workspace: ws,
+      settingSources: settingSourcesRef.current,
+    });
     const unsubscribe = streamManager.subscribe(sessionEventHandler);
     sessionStreamRef.current[threadId] = { streamManager, unsubscribe };
     return streamManager;
