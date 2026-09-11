@@ -195,10 +195,20 @@ _WORKSPACE_COMMANDS_CACHE: dict[tuple, list] = {}
 
 
 def _ss_cache_key(setting_sources: list | None) -> tuple | None:
-    """Hashable cache key for a setting_sources list. None ⇒ SDK defaults."""
-    if not setting_sources:
+    """Hashable cache key for a setting_sources list. None ⇒ SDK defaults;
+    [] ⇒ explicitly "no sources" — the rebuild path makes these distinct,
+    so the key must NOT collapse them (empty tuple ≠ None)."""
+    if setting_sources is None:
         return None
     return tuple(sorted(setting_sources))
+
+
+def _skills_cache_key(skills) -> tuple | str | None:
+    """Hashable cache key for skills. None ⇒ SDK defaults, 'all' ⇒ sentinel,
+    [] ⇒ distinct empty tuple (see _ss_cache_key), list ⇒ sorted tuple."""
+    if skills is None or skills == "all":
+        return skills
+    return tuple(sorted(skills))
 
 
 def _parse_setting_sources_query(raw: str | None) -> list | None:
@@ -320,7 +330,12 @@ class SessionLoop:
         # per-turn re-broadcast at the end of _loop_body re-validates with
         # the locked settings (safety net for any drift between localStorage
         # and the first message body).
-        cache_key = (self.workspace, _ss_cache_key(setting_sources))
+        # ponytail: skills are part of the command surface (skills surface as
+        # slash commands), so the key must include them — a skills toggle must
+        # not serve a cached list built under the old skill scope. SSE-open
+        # call site passes skills=None and keys with the defaults; a later
+        # rebuild broadcasts the right list for its own scope.
+        cache_key = (self.workspace, _ss_cache_key(setting_sources), _skills_cache_key(skills))
         cached = _WORKSPACE_COMMANDS_CACHE.get(cache_key)
         if cached is not None:
             self._cached_commands = cached
@@ -356,8 +371,11 @@ class SessionLoop:
         # one. If the new build fails, the old client is still in place and
         # the session stays usable. A failed disconnect with a half-built
         # replacement would brick the session until the next message retry.
-        if setting_sources == []:
-            setting_sources = None
+        # ponytail: [] for setting_sources is a REAL value ("no sources") on
+        # this path — same meaning as on the message path. The old []→None
+        # coercion made it fall through to _locked_settings, so "deselect all
+        # scopes" resurrected the locked scope. skills=[] still must coerce:
+        # the SDK hangs on an empty skills list (_build_options re-belts this).
         if skills == []:
             skills = None
         mode = permission_mode if permission_mode is not None else self._current_permission_mode
@@ -365,6 +383,9 @@ class SessionLoop:
             mode,
             setting_sources=setting_sources,
             skills=skills,
+            # FE sends explicit values (null = SDK default, not "no change");
+            # the locked-settings fallback is for _loop_body's respawn only.
+            use_locked_fallback=False,
         )
         old_client = self._client
         self._client = new_client
@@ -570,6 +591,7 @@ class SessionLoop:
         *,
         setting_sources: list | None = None,
         skills: list | Literal["all"] | None = None,
+        use_locked_fallback: bool = True,
     ) -> ClaudeSDKClient:
         # ponytail: build the SDK client for a specific FE mode. The toolset is
         # baked at launch — to switch modes live we disconnect this client and
@@ -582,7 +604,12 @@ class SessionLoop:
         # passes explicit values so the broadcast client is built with the FE's
         # declared scope BEFORE the first message locks anything in. After the
         # first message, the per-turn rebuild uses _locked_settings.
-        if setting_sources is None and skills is None:
+        # ponytail: the fallback is for _loop_body's respawn (no kwargs). The
+        # rebuild path passes explicit values where None means "SDK default",
+        # not "no change" — it passes use_locked_fallback=False so reverting
+        # to defaults actually reaches the live client instead of silently
+        # re-applying the locked scope.
+        if use_locked_fallback and setting_sources is None and skills is None:
             s = self._locked_settings or {}
             setting_sources = s.get("setting_sources")
             skills = s.get("skills")
@@ -607,82 +634,92 @@ class SessionLoop:
 
         while self._running:
             msg = await self._incoming.get()
-            # Lock session-startup settings on the first message. Subsequent
-            # messages carry the same fields but the client is already running,
-            # so we deliberately don't rebuild those — only the permission
-            # mode may change.
-            if self._locked_settings is None:
-                self._locked_settings = {
-                    "setting_sources": msg.setting_sources,
-                    "skills": msg.skills,
-                }
-            # ponytail: live permission switch. The toolset is launch-time in
-            # the SDK, so a mode flip means respawning the subprocess with
-            # --resume <session_id>. The conversation history and CLI's view
-            # of the session are preserved by the resume; the agent's
-            # in-memory state goes, but the next turn re-sees the full JSONL.
-            target_mode = msg.permission_mode
-            mode_changed = (
-                self._client is None
-                or getattr(self, "_current_permission_mode", None) != target_mode
-            )
-            if mode_changed:
-                if self._client is not None:
-                    try:
-                        await self._client.disconnect()
-                    except Exception:
-                        pass
-                    self._client = None
-                print(f"[PERM] {self.session_id} fe_mode={target_mode!r} -> respawn")
-                self._client = await self._build_client(target_mode)
-            self._current_permission_mode = target_mode
-            # ponytail: re-broadcast the SDK's command surface every turn so
-            # FE SSE reconnects that skip the replay buffer still get the
-            # list. ensure_commands_broadcast is idempotent (cached list
-            # reused) — re-broadcasts are cheap and safe. We pass the
-            # LOCKED settings (not the SSE-open query value) so the cache
-            # key is keyed by what the per-turn client is actually running
-            # with, defending against any drift between localStorage and
-            # the first message body.
-            locked = self._locked_settings or {}
-            await self.ensure_commands_broadcast(
-                setting_sources=locked.get("setting_sources"),
-                skills=locked.get("skills"),
-            )
-            # Reset per-turn state so each enqueued user message starts fresh.
-            self._pending_tools = {}
-            self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-            jsonl_size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
-            try:
-                # ponytail: _build_client / respawn above guarantees _client is
-                # non-None here; the `assert` is a no-op at runtime and quiets
-                # the type checker.
-                assert self._client is not None
-                await self._client.query(self._make_generator(msg), session_id=self.session_id)
-                async for sdk_event in self._client.receive_response():
-                    for legacy in self._translate_sdk_message(sdk_event, jsonl_path, jsonl_size_before):
-                        await self._broadcast(legacy)
-                # Per-turn context snapshot at the result-message boundary. Same
-                # shape as the 10s ticker; the FE reducer handles both with one
-                # branch. _translate_sdk_message is sync, so the snapshot can't
-                # live inside the `done` yield — broadcast it here, after
-                # receive_response() drains.
+            # ponytail: hold the per-session lock for the whole turn (respawn
+            # through response drain). POST /settings takes the same lock in
+            # post_session_settings, so a live-settings rebuild waits for the
+            # in-flight turn to drain instead of disconnecting the client
+            # underneath receive_response() (and underneath any pending
+            # permission_request). Consequence: the FE's 6s stuck-indicator
+            # safety net can expire while the POST legitimately waits on a
+            # long turn — acceptable; the post-rebuild commands_available
+            # broadcast still refreshes the palette when it lands.
+            async with await _session_lock(self.session_id):
+                # Lock session-startup settings on the first message. Subsequent
+                # messages carry the same fields but the client is already running,
+                # so we deliberately don't rebuild those — only the permission
+                # mode may change.
+                if self._locked_settings is None:
+                    self._locked_settings = {
+                        "setting_sources": msg.setting_sources,
+                        "skills": msg.skills,
+                    }
+                # ponytail: live permission switch. The toolset is launch-time in
+                # the SDK, so a mode flip means respawning the subprocess with
+                # --resume <session_id>. The conversation history and CLI's view
+                # of the session are preserved by the resume; the agent's
+                # in-memory state goes, but the next turn re-sees the full JSONL.
+                target_mode = msg.permission_mode
+                mode_changed = (
+                    self._client is None
+                    or getattr(self, "_current_permission_mode", None) != target_mode
+                )
+                if mode_changed:
+                    if self._client is not None:
+                        try:
+                            await self._client.disconnect()
+                        except Exception:
+                            pass
+                        self._client = None
+                    print(f"[PERM] {self.session_id} fe_mode={target_mode!r} -> respawn")
+                    self._client = await self._build_client(target_mode)
+                self._current_permission_mode = target_mode
+                # ponytail: re-broadcast the SDK's command surface every turn so
+                # FE SSE reconnects that skip the replay buffer still get the
+                # list. ensure_commands_broadcast is idempotent (cached list
+                # reused) — re-broadcasts are cheap and safe. We pass the
+                # LOCKED settings (not the SSE-open query value) so the cache
+                # key is keyed by what the per-turn client is actually running
+                # with, defending against any drift between localStorage and
+                # the first message body.
+                locked = self._locked_settings or {}
+                await self.ensure_commands_broadcast(
+                    setting_sources=locked.get("setting_sources"),
+                    skills=locked.get("skills"),
+                )
+                # Reset per-turn state so each enqueued user message starts fresh.
+                self._pending_tools = {}
+                self._turn_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+                jsonl_size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
                 try:
-                    ctx = await self._client.get_context_usage()
-                    await self._broadcast({"type": "context_usage", "data": ctx})
-                except Exception as e:
-                    print(f"[WARN] per-turn context usage snapshot failed: {e}")
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                print(f"[ERROR] SessionLoop {self.session_id}: {e}")
-                await self._broadcast({"type": "error", "message": str(e), "session_id": self.session_id})
-                if self._client is not None:
+                    # ponytail: _build_client / respawn above guarantees _client is
+                    # non-None here; the `assert` is a no-op at runtime and quiets
+                    # the type checker.
+                    assert self._client is not None
+                    await self._client.query(self._make_generator(msg), session_id=self.session_id)
+                    async for sdk_event in self._client.receive_response():
+                        for legacy in self._translate_sdk_message(sdk_event, jsonl_path, jsonl_size_before):
+                            await self._broadcast(legacy)
+                    # Per-turn context snapshot at the result-message boundary. Same
+                    # shape as the 10s ticker; the FE reducer handles both with one
+                    # branch. _translate_sdk_message is sync, so the snapshot can't
+                    # live inside the `done` yield — broadcast it here, after
+                    # receive_response() drains.
                     try:
-                        await self._client.disconnect()
-                    except Exception:
-                        pass
-                    self._client = None
+                        ctx = await self._client.get_context_usage()
+                        await self._broadcast({"type": "context_usage", "data": ctx})
+                    except Exception as e:
+                        print(f"[WARN] per-turn context usage snapshot failed: {e}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    print(f"[ERROR] SessionLoop {self.session_id}: {e}")
+                    await self._broadcast({"type": "error", "message": str(e), "session_id": self.session_id})
+                    if self._client is not None:
+                        try:
+                            await self._client.disconnect()
+                        except Exception:
+                            pass
+                        self._client = None
 
     def _translate_sdk_message(self, sdk_event, jsonl_path, jsonl_size_before):
         """Mirror legacy /api/chat response_reader: turn SDK events into the legacy event dicts
@@ -1608,11 +1645,17 @@ async def post_session_settings(
     )
     loop = await get_or_create_loop(workspace, session_id)
     try:
-        await loop.rebuild_with_settings(
-            setting_sources=body.setting_sources,
-            skills=body.skills,
-            permission_mode=body.permission_mode,
-        )
+        # ponytail: same per-session lock _loop_body holds across a turn —
+        # serializes concurrent rebuilds (no leaked ClaudeSDKClient subprocess,
+        # no stale-settings-wins race) and defers a mid-turn rebuild until the
+        # turn drains. Blocks until the lock is free; FE shows
+        # "Reinitializing…" meanwhile and palette refresh rides commands_available.
+        async with await _session_lock(session_id):
+            await loop.rebuild_with_settings(
+                setting_sources=body.setting_sources,
+                skills=body.skills,
+                permission_mode=body.permission_mode,
+            )
     except Exception as e:
         # ponytail: rebuild is best-effort. If it fails, the loop is in
         # whatever state _build_client left it in (probably unchanged —
