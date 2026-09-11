@@ -926,8 +926,13 @@ async def _session_lock(sid: str) -> asyncio.Lock:
 
 def _sdk_project_key(workspace: str) -> str:
     """Compute SDK project-key from workspace path."""
-    # The SDK replaces '.' with '-' in path components when building the key
-    return "-" + os.path.realpath(workspace).lstrip("/").replace("/", "-").replace(".", "-")
+    # The SDK replaces '.', '_', and '/' with '-' when building the key —
+    # verified empirically: workspace .../anthropic_routing_gateway is stored
+    # under -home-...-anthropic-routing-gateway. Missing the '_' rule made
+    # jsonl_path.exists() False for underscore workspaces, so _build_client
+    # passed --session-id (no --resume) for an existing session and the CLI
+    # died with "Session ID ... is already in use".
+    return "-" + os.path.realpath(workspace).lstrip("/").replace("/", "-").replace(".", "-").replace("_", "-")
 
 
 def _read_sdk_history(
