@@ -5,6 +5,7 @@ export default function SettingsModal() {
   const {
     isSettingsOpen,
     setIsSettingsOpen,
+    applySettingsToSession,
     permissionMode,
     setPermissionMode,
     settingSources,
@@ -54,7 +55,9 @@ export default function SettingsModal() {
   // Skills description
   let skillsDesc = 'null (SDK default: standard CLI discovery)';
   if (currentSkillsMode === 'none') {
-    skillsDesc = '[] (No skills at all: empty list)';
+    // NOTE: the SDK currently hangs on skills=[] — this sends an empty list
+    // but the backend coerces it to SDK defaults until that SDK bug is fixed.
+    skillsDesc = '[] (sent as-is; SDK currently falls back to its default)';
   } else if (currentSkillsMode === 'custom') {
     const count = (skillsList || []).length;
     skillsDesc = `[${(skillsList || []).map((s) => `"${s}"`).join(', ')}] (${count} skills enabled)`;
@@ -375,7 +378,7 @@ export default function SettingsModal() {
         <div className="pt-2 flex justify-end">
           <button
             type="button"
-            onClick={() => setIsSettingsOpen(false)}
+            onClick={() => { applySettingsToSession(); setIsSettingsOpen(false); }}
             className="px-4 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-white text-xs font-medium transition-colors shadow-sm cursor-pointer"
           >
             Done

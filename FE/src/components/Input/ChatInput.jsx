@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from '../../context/ChatContext';
 import { isMobileView } from '../../utils/helpers';
+import { skillsWireValue } from '../../utils/settingsWire';
 import ContextUsagePill from './ContextUsagePill';
 import QuickVoiceButton from './QuickVoiceButton';
 
@@ -153,7 +154,7 @@ export default function ChatInput() {
     }
     // ponytail: skillsMode='all' is the SDK's "all" sentinel; otherwise pass the
     // user-curated list. null means "use SDK defaults" (current BE behavior).
-    const skillsForSend = skillsMode === 'all' ? 'all' : (skillsList || null);
+    const skillsForSend = skillsWireValue(skillsMode, skillsList);
     sendMessage(finalText, [], imageData, {
       settingSources,
       skills: skillsForSend,

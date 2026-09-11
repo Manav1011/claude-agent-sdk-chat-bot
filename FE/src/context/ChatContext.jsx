@@ -14,8 +14,19 @@ import {
   rebuildSessionSettings,
   createSessionEventSource,
 } from '../utils/api';
+import { skillsWireValue } from '../utils/settingsWire';
 
 const ChatContext = createContext(null);
+
+// Order-independent signature of the three session-scope settings, so
+// "Done with nothing changed" can skip the rebuild POST entirely.
+function settingsSig(s) {
+  return JSON.stringify([
+    s.settingSources ?? null,
+    s.skills ?? null,
+    s.permissionMode ?? null,
+  ]);
+}
 
 function getInitialSettingSources() {
   const stored = localStorage.getItem('qa-setting-sources');
@@ -93,6 +104,10 @@ export function ChatProvider({ children }) {
   // (e.g. toggling three scopes) collapse into one rebuild 400ms after the
   // last change. Without this, each toggle pays a 2s SDK init.
   const rebuildTimersRef = useRef({});
+  // ponytail: { [threadId]: JSON string of last-applied settings }. Lets
+  // applySettingsToSession skip the POST when Done was clicked with nothing
+  // changed since the last rebuild (open modal → Done = no 2s SDK churn).
+  const lastAppliedRef = useRef({});
 
   // ponytail: safety net. If the rebuild POST succeeds but the
   // commands_available broadcast is lost (network blip, client crash),
@@ -298,15 +313,16 @@ export function ChatProvider({ children }) {
     delete sessionStreamRef.current[threadId];
   }, []);
 
-  // ponytail: debounced settings-rebuild trigger. The four settings setters
-  // call this; it collapses rapid changes (one toggle, several scopes) into
-  // a single POST 400ms after the last change and aborts any in-flight POST
-  // so only the newest settings are applied. A no-op when there is no active
-  // session (no currentThreadId) — see the setters' call sites.
+  // ponytail: settings-rebuild trigger. Called once per modal "Done" via
+  // applySettingsToSession (not from the setters — toggling must not spam
+  // ~2s SDK rebuilds). Skips entirely when nothing changed since the last
+  // successful apply. The debounce/abort machinery stays — cheap insurance
+  // against double-clicked Done.
   const rebuildSession = useCallback((threadId, settings) => {
     if (!threadId) return;
     const ws = getWorkspacePath();
     if (!ws) return;
+    if (lastAppliedRef.current[threadId] === settingsSig(settings)) return;
     // ponytail: clear any pending timer for this thread so the new change
     // resets the 400ms window. The previous scheduled call becomes a no-op
     // (we cancel its in-flight AbortController via the signal).
@@ -328,6 +344,9 @@ export function ChatProvider({ children }) {
           permissionMode: settings.permissionMode,
           signal: controller.signal,
         });
+        // ponytail: record on SUCCESS only — an aborted/failed POST must not
+        // mark settings as applied, or a later identical Done would be skipped.
+        lastAppliedRef.current[threadId] = settingsSig(settings);
         // ponytail: don't clear `rebuilding` here — wait for the matching
         // commands_available (next step). On error, fall through to the
         // catch and clear so the indicator doesn't stick.
@@ -337,7 +356,12 @@ export function ChatProvider({ children }) {
           setRebuilding((prev) => ({ ...prev, [threadId]: false }));
         }
       } finally {
-        delete rebuildTimersRef.current[threadId];
+        // ponytail: only delete our own entry — an aborted POST must not evict
+        // the replacement entry a newer change already registered, or the next
+        // change can't clearTimeout/abort the newer rebuild.
+        if (rebuildTimersRef.current[threadId]?.controller === controller) {
+          delete rebuildTimersRef.current[threadId];
+        }
       }
     }, 400);
   }, [getWorkspacePath]);
@@ -1141,6 +1165,9 @@ export function ChatProvider({ children }) {
         skills: settings?.skills,
         permissionMode: settings?.permissionMode,
       });
+      // The server locks these on the first message — same settings state,
+      // so a modal Done that changed nothing must not trigger a rebuild.
+      if (settings) lastAppliedRef.current[sessionThreadId] = settingsSig(settings);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to send message');
     }
@@ -1509,6 +1536,15 @@ export function ChatProvider({ children }) {
     permissionMode,
     rebuilding,
     rebuildSession,
+    // Done-button entry point: one rebuild for all toggled settings, no-op
+    // when the sig matches what's already applied/locked.
+    applySettingsToSession: () => {
+      rebuildSession(currentThreadId, {
+        settingSources: settingSourcesRef.current,
+        skills: skillsWireValue(skillsMode, skillsList),
+        permissionMode,
+      });
+    },
     contextUsage,
     isStreaming,
     isAiResponding,
@@ -1537,49 +1573,19 @@ export function ChatProvider({ children }) {
       if (!val) localStorage.removeItem('qa-setting-sources');
       else if (val.includes('user')) localStorage.setItem('qa-setting-sources', 'user');
       else if (val.includes('local')) localStorage.setItem('qa-setting-sources', 'local');
-      // ponytail: fire a debounced rebuild for the active session only.
-      // rebuildSession is a no-op when there is no currentThreadId.
-      const skillsForRebuild = skillsMode === 'all' ? 'all' : skillsList;
-      rebuildSession(currentThreadId, {
-        settingSources: val,
-        skills: skillsForRebuild,
-        permissionMode,
-      });
     },
     setSkillsMode: (val) => {
       setSkillsMode(val);
       localStorage.setItem('qa-skills-mode', val);
-      const skillsForRebuild = val === 'all' ? 'all' : skillsList;
-      rebuildSession(currentThreadId, {
-        settingSources: settingSourcesRef.current,
-        skills: skillsForRebuild,
-        permissionMode,
-      });
     },
     setSkillsList: (val) => {
       setSkillsList(val);
       localStorage.setItem('qa-skills-list', JSON.stringify(val));
-      // ponytail: list changes only matter when skillsMode is 'custom';
-      // for 'all'/'default'/'none' the SDK's value is fixed. We still
-      // pass the list so the rebuild is correct when the user is editing
-      // a custom list.
-      const skillsForRebuild = skillsMode === 'all' ? 'all' : val;
-      rebuildSession(currentThreadId, {
-        settingSources: settingSourcesRef.current,
-        skills: skillsForRebuild,
-        permissionMode,
-      });
     },
     setPermissionMode: (val) => {
       setPermissionMode(val);
       if (val) localStorage.setItem('qa-permission-mode', val);
       else localStorage.removeItem('qa-permission-mode');
-      const skillsForRebuild = skillsMode === 'all' ? 'all' : skillsList;
-      rebuildSession(currentThreadId, {
-        settingSources: settingSourcesRef.current,
-        skills: skillsForRebuild,
-        permissionMode: val,
-      });
     },
     expandThoughts,
     setExpandThoughts: (val) => {
