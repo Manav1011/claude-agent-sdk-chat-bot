@@ -1,17 +1,36 @@
 {
   "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:8000",
+    "ANTHROPIC_BASE_URL": "http://localhost:8083/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "97f5482590888eaa0afe9e173babd87c9abae1f5",
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "ANTHROPIC_MODEL": "qwen-3.6",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "qwen-3.6",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen-3.6",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3.6"
+    "ANTHROPIC_MODEL": "coder",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "coder",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "coder",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "coder"
   },
   "permissions": {
     "allow": [
-      "Bash"
+      "Bash",
+      "mcp__serena__list_memories",
+      "mcp__gpt-driver__send_message",
+      "mcp__gpt-driver__poll_response",
+      "mcp__gpt-driver__session_list",
+      "mcp__gpt-driver__session_start",
+      "Bash(cat /home/web-h-063/Documents/auto-data-intelligence/.venv/lib/python3.12/site-packages/wren_langchain/_tools.py | head -110 | tail -40)",
+      "Read(//home/web-h-063/Documents/auto-data-intelligence/.venv/lib/python3.12/site-packages/wren_langchain/**)",
+      "Bash(python3 -c \"from policy_service import policy_service; print\\('ok:', policy_service\\)\")",
+      "mcp__serena__find_symbol",
+      "Read(//home/manav1011/Downloads/**)",
+      "WebSearch",
+      "WebFetch(domain:www.lmsys.org)",
+      "WebFetch(domain:docs.sglang.ai)",
+      "WebFetch(domain:docs.sglang.io)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:docs.claude.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }

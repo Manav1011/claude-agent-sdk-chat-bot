@@ -1,28 +1,22 @@
 {
 	"folders": [
 		{
+			"name": "explainer-bot",
 			"path": "."
 		},
 		{
-			"path": "../auto-data-intelligence/nkproteins-wren-api"
-		},
-		{
-			"path": "../gpt-driver-mcp"
-		},
-		{
-			"path": "../office-beacon-fe"
-		},
-		{
-			"path": "../ocr-pipeline"
-		},
-		{
-			"path": "../auto-data-intelligence"
-		},
-		{
+			"name": "ornith_1_5_quality_testing",
 			"path": "../ornith_1_5_quality_testing"
 		},
 		{
+			"name": "anthropic_routing_gateway",
 			"path": "../anthropic_routing_gateway"
+		},
+		{
+			"path": "../sglang-rtxpro6000"
+		},
+		{
+			"path": "../claude-code-optimizations"
 		}
 	],
 	"settings": {

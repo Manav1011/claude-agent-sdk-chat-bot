@@ -35,7 +35,7 @@ from schemas import Project, ProjectCreate, ProjectsListResponse, ProjectSession
 HOST = "0.0.0.0"
 PORT = 8225
 
-LLM_MODEL = os.environ.get("LLM_MODEL", "MiniMaxAI/MiniMax-M3")
+LLM_MODEL = os.environ.get("LLM_MODEL", "coder")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjgyNTk1NTQ1LTAyMDYtNGVlMy1hMjg3LTZhM2RiYjI2OTQzNSIsInNjb3BlIjoiaWVfbW9kZWwiLCJwcm9kdWN0IjoiSUUiLCJvd25lcklkIjoiZDNkY2VjMjgtMjQ5MS00NmU1LWI2YmYtZDcyYzg0YmRmZGEyIn0._R-wta0JXQRi3FbA7S0IXqC_sT14maRy0CwZ7kl4tM4")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8083/anthropic")
 
