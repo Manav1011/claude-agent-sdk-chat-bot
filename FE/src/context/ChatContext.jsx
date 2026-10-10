@@ -13,6 +13,7 @@ import {
   interruptSession,
   rebuildSessionSettings,
   createSessionEventSource,
+  fetchServerInfo,
 } from '../utils/api';
 import { skillsWireValue } from '../utils/settingsWire';
 
@@ -25,6 +26,7 @@ function settingsSig(s) {
     s.settingSources ?? null,
     s.skills ?? null,
     s.permissionMode ?? null,
+    s.outputStyle ?? null,
   ]);
 }
 
@@ -94,6 +96,11 @@ export function ChatProvider({ children }) {
   const [permissionMode, setPermissionMode] = useState(() => {
     return localStorage.getItem('qa-permission-mode') || null;
   });
+  const [outputStyle, setOutputStyle] = useState(() => {
+    return localStorage.getItem('qa-output-style') || null;
+  });
+  // ponytail: available output styles fetched from server-info.
+  const [availableOutputStyles, setAvailableOutputStyles] = useState([]);
   // ponytail: { [threadId]: boolean } — true while a rebuild POST is in flight
   // for that session. The indicator in ChatInput reads `rebuilding[currentThreadId]`.
   const [rebuilding, setRebuilding] = useState({});
@@ -143,6 +150,12 @@ export function ChatProvider({ children }) {
       document.documentElement.classList.add('dark');
     }
   }, [theme]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('qa-output-style', outputStyle || '');
+    } catch (e) {}
+  }, [outputStyle]);
 
   // Streaming & Context usage (per-session streaming state)
   const [contextUsage, setContextUsage] = useState(null);
@@ -338,6 +351,7 @@ export function ChatProvider({ children }) {
           settingSources: settings.settingSources,
           skills: settings.skills,
           permissionMode: settings.permissionMode,
+          outputStyle: settings.outputStyle,
           signal: controller.signal,
         });
         // ponytail: record on SUCCESS only — an aborted/failed POST must not
@@ -463,6 +477,15 @@ export function ChatProvider({ children }) {
       console.error('Failed to load projects:', e);
     }
   }, [loadProjectSessions]);
+
+  // Fetch available output styles from the backend whenever workspace changes.
+  useEffect(() => {
+    const ws = getWorkspacePath();
+    if (!ws) return;
+    fetchServerInfo(ws).then((info) => {
+      setAvailableOutputStyles(info.output_styles || []);
+    }).catch(() => {});
+  }, [getWorkspacePath]);
 
   // Toggle Project Expand/Collapse
   // ponytail: clicking a project header is just expand/collapse. activeProjectId
@@ -1000,6 +1023,7 @@ export function ChatProvider({ children }) {
         settingSources: settings?.settingSources,
         skills: settings?.skills,
         permissionMode: settings?.permissionMode,
+        outputStyle: settings?.outputStyle,
       });
       // The server locks these on the first message — same settings state,
       // so a modal Done that changed nothing must not trigger a rebuild.
@@ -1357,6 +1381,9 @@ export function ChatProvider({ children }) {
     skillsMode,
     skillsList,
     permissionMode,
+    outputStyle,
+    setOutputStyle,
+    availableOutputStyles,
     rebuilding,
     rebuildSession,
     // Done-button entry point: one rebuild for all toggled settings, no-op
@@ -1366,6 +1393,7 @@ export function ChatProvider({ children }) {
         settingSources: settingSourcesRef.current,
         skills: skillsWireValue(skillsMode, skillsList),
         permissionMode,
+        outputStyle,
       });
     },
     contextUsage,

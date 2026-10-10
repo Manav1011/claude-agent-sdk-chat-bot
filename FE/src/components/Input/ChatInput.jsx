@@ -23,7 +23,7 @@ function fileToBase64Image(file) {
 }
 
 export default function ChatInput() {
-  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode, currentCommands, currentThreadId, rebuilding } = useChat();
+  const { isStreaming, sendMessage, stopStream, replyQuote, clearReplyQuote, settingSources, skillsList, skillsMode, permissionMode, outputStyle, currentCommands, currentThreadId, rebuilding } = useChat();
   const [inputText, setInputText] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -158,6 +158,7 @@ export default function ChatInput() {
       settingSources,
       skills: skillsForSend,
       permissionMode,
+      outputStyle,
     });
   };
 

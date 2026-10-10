@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useChat } from '../../context/ChatContext';
 
+const OUTPUT_STYLE_STORAGE_KEY = 'qa-output-style';
+
 export default function SettingsModal() {
   const {
     isSettingsOpen,
@@ -14,6 +16,9 @@ export default function SettingsModal() {
     setSkillsMode,
     skillsList,
     setSkillsList,
+    outputStyle,
+    setOutputStyle,
+    availableOutputStyles,
     theme,
     setTheme,
   } = useChat();
@@ -349,6 +354,51 @@ export default function SettingsModal() {
             </div>
           </div>
         </div>
+
+        {/* 4. Output Style */}
+        {availableOutputStyles.length > 0 && (
+          <div className="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium text-white">Output Style</div>
+                <div className="text-[11px] text-txt-subtle">Choose how Claude responds</div>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setOutputStyle(null)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  !outputStyle
+                    ? 'bg-brand text-white shadow-sm'
+                    : 'bg-dark-bg text-txt-subtle hover:text-white border border-dark-border'
+                }`}
+              >
+                Default
+              </button>
+              {availableOutputStyles.map((s) => (
+                <button
+                  key={s.name}
+                  type="button"
+                  onClick={() => setOutputStyle(s.name)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                    outputStyle === s.name
+                      ? 'bg-brand text-white shadow-sm'
+                      : 'bg-dark-bg text-txt-subtle hover:text-white border border-dark-border'
+                  }`}
+                  title={s.description}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+            {outputStyle && (
+              <div className="text-[10px] text-txt-subtle font-mono">
+                {availableOutputStyles.find(s => s.name === outputStyle)?.description || ''}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="pt-2 flex justify-end">
           <button
