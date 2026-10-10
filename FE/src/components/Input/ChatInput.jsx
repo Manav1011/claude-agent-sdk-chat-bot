@@ -3,7 +3,6 @@ import { useChat } from '../../context/ChatContext';
 import { isMobileView } from '../../utils/helpers';
 import { skillsWireValue } from '../../utils/settingsWire';
 import ContextUsagePill from './ContextUsagePill';
-import QuickVoiceButton from './QuickVoiceButton';
 
 // Convert a File to a base64 dict that matches the SDK image-block format
 // (`{type: "image", source: {type: "base64", media_type, data}}`).
@@ -416,7 +415,6 @@ export default function ChatInput() {
                 </svg>
               </button>
               <ContextUsagePill />
-              <QuickVoiceButton />
             </div>
 
             {/* Right: Send / Stop Action Button */}

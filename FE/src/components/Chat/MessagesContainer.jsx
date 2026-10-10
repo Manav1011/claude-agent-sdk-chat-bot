@@ -21,7 +21,6 @@ export default function MessagesContainer() {
     isAiResponding,
     activeStreamContent,
     activeThinkingContent,
-    activeSpeechExplanation,
     errorMessage,
     pendingPermissions,
     loadOlderMessages,
@@ -176,7 +175,6 @@ export default function MessagesContainer() {
             <AiMessage
               key={key}
               content={msg.content}
-              speechExplanation={msg.speech_explanation}
               usage={msg.usage}
               messageId={`msg-${currentThreadId}-${index}`}
             />
@@ -200,7 +198,6 @@ export default function MessagesContainer() {
       {activeStreamContent && (
         <AiMessage
           content={activeStreamContent}
-          speechExplanation={activeSpeechExplanation}
           messageId={`active-stream-${currentThreadId}`}
         />
       )}

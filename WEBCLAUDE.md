@@ -22,8 +22,8 @@ Everything goes through it — there is no other path to the agent. The backend 
 ┌──────────────────────────────────────────────────────────────────┐
 │                  FastAPI  (chat_server.py :8225)                │
 │  ┌──────────┐  ┌──────────────┐  ┌─────────────┐  ┌───────────┐ │
-│  │ /api/*   │  │ SessionLoop  │  │  Piper TTS  │  │ SQLite    │ │
-│  │ routes   │  │  per-session │  │  /api/tts   │  │ projects  │ │
+│  │ /api/*   │  │ SessionLoop  │  │             │  │ SQLite    │ │
+│  │ routes   │  │  per-session │  │             │  │ projects  │ │
 │  └────┬─────┘  └──────┬───────┘  └─────┬───────┘  └─────┬─────┘ │
 │       │               │                │                │       │
 │       └─────►  ClaudeSDKClient  ◄─────┘                │       │
@@ -47,7 +47,7 @@ explainer-bot/
 ├── chat_server.py                 ← entire backend, ~1460 lines
 ├── schemas.py                     ← Pydantic DTOs (Project, ProjectCreate, …)
 ├── projects.db                    ← SQLite: only the projects index
-├── requirements.txt               ← fastapi, pydantic, claude-agent-sdk, piper-tts
+├── requirements.txt               ← fastapi, pydantic, claude-agent-sdk
 ├── start_webclaude.sh             ← boot server + cloudflared tunnel
 ├── restart_server.sh, stop_webclaude.sh
 ├── index.html                     ← legacy vanilla UI (still served at /)
@@ -63,9 +63,9 @@ explainer-bot/
 │       ├── utils/{api.js, helpers.js, markdown.js}
 │       └── components/
 │           ├── Chat/    (Messages, HumanMessage, AiMessage, ThinkingMessage,
-│           │            ToolCallMessage, SpeechPlayer, PermissionPrompt,
+│           │            ToolCallMessage, PermissionPrompt,
 │           │            SelectionPopup, MarkdownRenderer)
-│           ├── Input/   (ChatInput, ContextUsagePill, QuickVoiceButton)
+│           ├── Input/   (ChatInput, ContextUsagePill)
 │           ├── Header/  (Header, TabBar, TabSwitcher)
 │           ├── Sidebar/ (ProjectsHeader, ProjectItem, SessionItem, AddProjectForm,
 │           │             AppBrand)
@@ -82,11 +82,10 @@ The codebase is intentionally minimal — no microservices, no message broker, n
 ### 3.1 Stack and lifecycle
 
 - **Framework**: FastAPI on Uvicorn (`uvicorn.run(app, host="0.0.0.0", port=8225)`)
-- **Concurrency model**: asyncio. SDK is awaited directly; TTS synthesis is offloaded to a `ThreadPoolExecutor` (Piper is CPU-bound, blocks the loop).
+- **Concurrency model**: asyncio. SDK is awaited directly.
 - **Lifespan** (`async def lifespan(app)`):
   1. `_init_db()` — create `projects` table in `projects.db` if missing.
-  2. `_load_piper_model()` — warm-load `en_US-ryan-medium.onnx` (or `lessac`) into memory.
-  3. On shutdown: clear `_WORKSPACE_CLIENTS`, call `shutdown()` on every active `SessionLoop` so SDK subprocesses disconnect cleanly, then `shutdown(wait=False)` the TTS executor.
+  2. On shutdown: clear `_WORKSPACE_CLIENTS`, call `shutdown()` on every active `SessionLoop` so SDK subprocesses disconnect cleanly.
 
 ### 3.2 Configuration
 
@@ -237,7 +236,7 @@ The server reads them in two ways:
 
 1. **Live tailing** during streaming — `_tail_jsonl_for_tool_results` opens the file, seeks to the byte offset recorded before `client.query()`, reads the new bytes, extracts any `tool_result` blocks, broadcasts each as a `tool_result_content` event.
 
-2. **History reload** on session open — `_read_sdk_history` reads the full file, parses entries, assembles a chronological `messages` list (`human`, `ai` with `thinking`/`content`/`speech_explanation`, `tool` with name/input/content), supports byte-offset pagination via `cursor`.
+2. **History reload** on session open — `_read_sdk_history` reads the full file, parses entries, assembles a chronological `messages` list (`human`, `ai` with `thinking`/`content`, `tool` with name/input/content), supports byte-offset pagination via `cursor`.
 
 The DB **only** stores project metadata (id, name, path, created_at) — never conversation content. SQLite is purely an index for the workspace selector. Conversation history is owned entirely by the SDK filesystem format.
 
@@ -278,19 +277,7 @@ Full event vocabulary the FE reducer handles:
 | `done` | `{thread_id, usage}` | ResultMessage |
 | `error` | `{message}` | session/transport failure |
 
-### 3.7 Piper TTS
-
-`/api/tts?q=...` synthesizes speech on demand.
-
-- Model: Piper neural voice (`en_US-ryan-medium.onnx` or `en_US-lessac-medium.onnx` whichever is on disk).
-- Synthesis runs in a dedicated `ThreadPoolExecutor(max_workers=min(4, cpu_count))` so the asyncio loop stays responsive.
-- Cache: in-process `OrderedDict` LRU keyed by `sha256(text)`, capped at 300 entries, mutex-locked.
-- Cache headers: `Cache-Control: public, max-age=86400, immutable`, plus `X-Cache: HIT|MISS` for debugging.
-- Fallback: Google Translate `translate_tts` returns MP3 if Piper is absent or fails.
-
-The frontend's `SpeechPlayer` reads `speech_explanation` off AI messages and calls this endpoint for audio playback — only on AI turns that opt in by emitting the field.
-
-### 3.8 The full HTTP surface
+### 3.7 The full HTTP surface
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -307,7 +294,6 @@ The frontend's `SpeechPlayer` reads `speech_explanation` off AI messages and cal
 | GET | `/api/projects/{id}/sessions?limit=…&offset=…` | Project's sessions via SDK |
 | POST | `/api/workspaces/select` | `{workspace}` → `{thread_id: uuid}` |
 | GET | `/api/workspaces/current?session_id=…` | Resolve session → workspace |
-| GET | `/api/tts?q=…` | Piper (or Google fallback) TTS |
 | GET | `/api/permissions/pending?thread_id=…` | List unresolved permission futures |
 | POST | `/api/permissions/decision` | `{request_id, session_id, decision, updated_input?, answers?, message?}` |
 | POST | `/api/sessions/{sid}/messages?workspace=…` | Queue user message; body = `_UserMessage` |
@@ -366,10 +352,9 @@ The browser auto-reconnects on transient errors and sets `Last-Event-ID` on retr
 - **`Chat/`** — message rendering and conversation surface:
   - `MessagesContainer` — virtualized scroll list with auto-scroll-to-bottom.
   - `HumanMessage`, `AiMessage`, `ThinkingMessage`, `ToolCallMessage`.
-  - `SpeechPlayer` — plays `/api/tts?q=...` for AI messages that carry a `speech_explanation`.
   - `PermissionPrompt` — modal that surfaces `permission_request` events; resolves via `submitPermissionDecision`.
   - `SelectionPopup`, `MarkdownRenderer` — markdown + selection-driven UI helpers.
-- **`Input/`** — `ChatInput` (textarea + image upload + submit), `ContextUsagePill` (renders `context_usage` snapshots), `QuickVoiceButton`.
+- **`Input/`** — `ChatInput` (textarea + image upload + submit), `ContextUsagePill` (renders `context_usage` snapshots).
 - **`Header/`** — `Header`, `TabBar`, `TabSwitcher` (multi-session tab UI).
 - **`Sidebar/`** — projects list, session items, add-project form, brand.
 - **`Modals/`** — `SettingsModal` (permission mode + setting_sources + skills), `ContextModal` (full context-usage detail), `ImageLightboxModal`.
@@ -436,11 +421,6 @@ The browser auto-reconnects on transient errors and sets `Last-Event-ID` on retr
 - Lightbox modal for full-size preview.
 - Image thumbnails persist on history reload (mirrored shape in JSONL reader).
 
-### Speech
-- Piper neural TTS via `/api/tts`, in-process LRU + thread pool offload.
-- Google Translate fallback if Piper unavailable.
-- FE `SpeechPlayer` plays audio for AI messages tagged with `speech_explanation`.
-
 ### UX
 - Light/dark theme.
 - Markdown rendering (react-markdown + remark-gfm + rehype-highlight + highlight.js).
@@ -467,13 +447,11 @@ The browser auto-reconnects on transient errors and sets `Last-Event-ID` on retr
 | Model | `LLM_MODEL` env | `MiniMaxAI/MiniMax-M3` | Anthropic-compatible endpoint |
 | API key | `LLM_API_KEY` env | hardcoded JWT in source | Set before deploy |
 | Base URL | `LLM_BASE_URL` env | `http://localhost:8083/anthropic` | Proxied to actual Claude API |
-| TTS voice | on-disk `.onnx` | `en_US-ryan-medium.onnx` then `lessac` | First match wins |
 | Auth password | literal | `MS@1011` | `/api/auth/verify` |
 | Session idle timeout | `_SESSION_IDLE_TIMEOUT` | 30 min | Hard-coded constant |
 | SSE replay buffer | `maxlen=2000` | per-session | ~4MB at typical text_delta size |
-| TTS cache size | `_TTS_CACHE_MAX_SIZE` | 300 | OrderedDict LRU |
 | Heartbeat interval | `asyncio.wait_for(timeout=15)` | 15 s | No `id:` line on heartbeats |
-| Context usage poll | `asyncio.sleep(10)` | 10 s | Plus per-turn snapshot |
+| Context usage | `get_context_usage()` | per-turn | Only via per-turn snapshot |
 
 ## 8. Running it
 
@@ -508,7 +486,6 @@ Cloudflared config lives at `~/.cloudflared/webclaude/config.yml` and is referen
 7. **Session ID must be a UUID** — `/api/sessions/{sid}/...` returns 400 on anything else. The server validates at the trust boundary.
 8. **Heartbeats never carry `id:`** — preserves `lastEventId` so quiet streams don't lose their replay cursor.
 9. **`maxlen=2000` replay buffer** assumes typical text_delta payloads. A run with very large bash output can blow past 4MB/session; the `/messages` catch-up API covers any gap and the reducer dedupes.
-10. **`_piper_voice` global is process-wide** — synthesis blocks the asyncio loop if the executor is exhausted. Max workers capped at 4.
 
 ## 10. Where to look next
 

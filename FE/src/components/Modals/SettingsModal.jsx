@@ -14,8 +14,6 @@ export default function SettingsModal() {
     setSkillsMode,
     skillsList,
     setSkillsList,
-    speechExplanation,
-    setSpeechExplanation,
     theme,
     setTheme,
   } = useChat();
@@ -317,30 +315,7 @@ export default function SettingsModal() {
             <div className="text-[10px] text-txt-subtle font-mono">{skillsDesc}</div>
           </div>
 
-          {/* 4. Speech Explanation Toggle */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60">
-            <div className="space-y-0.5 pr-4">
-              <div className="text-xs font-medium text-white">Speech Explanation</div>
-              <div className="text-[11px] text-txt-subtle leading-relaxed">
-                Enable spoken voice explanations for AI responses.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSpeechExplanation(!speechExplanation)}
-              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                speechExplanation ? 'bg-brand' : 'bg-dark-border'
-              }`}
-            >
-              <span
-                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                  speechExplanation ? 'translate-x-4' : 'translate-x-0'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* 5. Theme Selector */}
+          {/* Theme Selector */}
           <div className="flex items-center justify-between p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60">
             <div className="space-y-0.5 pr-4">
               <div className="text-xs font-medium text-white">Theme</div>

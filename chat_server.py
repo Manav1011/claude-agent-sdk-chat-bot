@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import io
 import json
 import os
 import uuid
-import wave
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse, Response, FileResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Literal, Any, cast
@@ -35,9 +31,6 @@ from schemas import Project, ProjectCreate, ProjectsListResponse, ProjectSession
 HOST = "0.0.0.0"
 PORT = 8225
 
-LLM_MODEL = os.environ.get("LLM_MODEL", "coder")
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjgyNTk1NTQ1LTAyMDYtNGVlMy1hMjg3LTZhM2RiYjI2OTQzNSIsInNjb3BlIjoiaWVfbW9kZWwiLCJwcm9kdWN0IjoiSUUiLCJvd25lcklkIjoiZDNkY2VjMjgtMjQ5MS00NmU1LWI2YmYtZDcyYzg0YmRmZGEyIn0._R-wta0JXQRi3FbA7S0IXqC_sT14maRy0CwZ7kl4tM4")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8083/anthropic")
 
 # Cache HTML frontends at module load time
 _FE_DIST_PATH = Path(__file__).parent / "FE" / "dist"
@@ -91,47 +84,11 @@ def _resolve_workspace(project_id: int | None) -> str:
     return _DEFAULT_WORKSPACE
 
 
-# ============== Piper Neural TTS Setup ==============
-_PIPER_MODEL_PATHS = [
-    Path(__file__).parent / "en_US-ryan-medium.onnx",
-    Path(__file__).parent / "en_US-lessac-medium.onnx",
-]
-_piper_voice = None
-_tts_executor = ThreadPoolExecutor(
-    max_workers=min(4, os.cpu_count() or 2),
-    thread_name_prefix="tts_worker",
-)
-_TTS_CACHE_MAX_SIZE = 300
-_tts_cache: OrderedDict[str, bytes] = OrderedDict()
-_tts_cache_lock = asyncio.Lock()
-
-def _load_piper_model():
-    global _piper_voice
-    model_path = next((p for p in _PIPER_MODEL_PATHS if p.exists()), None)
-    if model_path is not None:
-        try:
-            from piper import PiperVoice
-            _piper_voice = PiperVoice.load(model_path)
-            print(f"[INFO] Piper TTS model warm-loaded successfully from {model_path.name}.")
-        except Exception as e:
-            print(f"[WARN] Failed to load Piper TTS model: {e}")
-    else:
-        print("[WARN] No Piper model file found in project directory.")
-
-def _synthesize_piper_wav(text: str) -> bytes:
-    """CPU-bound task executed inside dedicated thread pool."""
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wav_file:
-        _piper_voice.synthesize_wav(text, wav_file)
-    return buf.getvalue()
-
-
 # ============== Lifespan ==============
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _init_db()
-    _load_piper_model()
     yield
     global _WORKSPACE_CLIENTS
     _WORKSPACE_CLIENTS.clear()
@@ -142,10 +99,31 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     _SESSION_REGISTRY.clear()
-    _tts_executor.shutdown(wait=False)
 
 
 app = FastAPI(title="QA Automation Chatbot", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    import sys
+    try:
+        print(f"[REQUEST] {request.method} {request.url.path}", flush=True)
+        body = await request.body()
+        if body:
+            print(f"[REQUEST] body ({len(body)} bytes): {body[:500]}", flush=True)
+        # Cache body so downstream handlers can read it again
+        request.state._body = body
+        async def receive():
+            return {"type": "http.request", "body": request.state._body}
+
+        scope = request.scope
+        scope["receive"] = receive
+    except Exception as e:
+        print(f"[REQUEST_LOG_ERROR] {e}", flush=True)
+        raise
+    response = await call_next(request)
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -421,7 +399,6 @@ class SessionLoop:
         self._running = True
         self._task = asyncio.create_task(self._loop_body())
         asyncio.create_task(self._idle_watcher())
-        asyncio.create_task(self._context_usage_ticker())
 
     async def enqueue(self, msg: _UserMessage):
         self._touch()
@@ -697,13 +674,13 @@ class SessionLoop:
                     assert self._client is not None
                     await self._client.query(self._make_generator(msg), session_id=self.session_id)
                     async for sdk_event in self._client.receive_response():
+                        print(f"[LLM_CHUNK] {sdk_event}", flush=True)
                         for legacy in self._translate_sdk_message(sdk_event, jsonl_path, jsonl_size_before):
                             await self._broadcast(legacy)
-                    # Per-turn context snapshot at the result-message boundary. Same
-                    # shape as the 10s ticker; the FE reducer handles both with one
-                    # branch. _translate_sdk_message is sync, so the snapshot can't
-                    # live inside the `done` yield — broadcast it here, after
-                    # receive_response() drains.
+                    # Per-turn context snapshot from get_context_usage(). This is the
+                    # authoritative source for FE context display — not message_delta
+                    # usage, not ResultMessage.usage. _translate_sdk_message is sync,
+                    # so the snapshot can't live inside the `done` yield.
                     try:
                         ctx = await self._client.get_context_usage()
                         await self._broadcast({"type": "context_usage", "data": ctx})
@@ -882,26 +859,30 @@ class SessionLoop:
         while self._running:
             await asyncio.sleep(60)
             now = asyncio.get_event_loop().time()
-            if now - self._last_activity > _SESSION_IDLE_TIMEOUT and not self._subscribers and self._incoming.qsize() == 0:
+            idle = now - self._last_activity > _SESSION_IDLE_TIMEOUT
+            if not idle or self._incoming.qsize():
+                continue
+            # A turn or rebuild holds _session_lock — never cut it off.
+            lk = _session_locks.get(self.session_id)
+            if lk is not None and lk.locked():
+                continue
+            if not self._subscribers:
                 await self.shutdown()
                 async with _registry_lock:
                     _SESSION_REGISTRY.pop(self.session_id, None)
                 return
-
-    async def _context_usage_ticker(self):
-        """Periodic context snapshot — every 10s while the session is alive.
-        Same shape as the per-turn snapshot in `done`; the FE reducer handles
-        both with one branch."""
-        while self._running:
-            await asyncio.sleep(10)
-            if self._client is None:
-                continue
-            try:
-                ctx = await self._client.get_context_usage()
-                await self._broadcast({"type": "context_usage", "data": ctx})
-            except Exception as e:
-                print(f"[WARN] context usage poll failed: {e}")
-
+            # ponytail: an idle-but-viewed session (open tab keeps an SSE
+            # subscriber, so full reaping can't run) still holds a claude CLI
+            # subprocess. Release the heavyweight — the palette lives on the
+            # command cache, context usage is updated per-turn, and the next
+            # message rebuilds lazily via --resume. The loop itself is cheap.
+            if self._client is not None:
+                try:
+                    await self._client.disconnect()
+                except Exception as e:
+                    print(f"[WARN] idle client release failed: {e}")
+                self._client = None
+                print(f"[IDLE] {self.session_id} released SDK client ({len(self._subscribers)} subscriber(s) still attached)")
 
 async def get_or_create_loop(workspace: str, session_id: str) -> SessionLoop:
     async with _registry_lock:
@@ -973,7 +954,6 @@ def _read_sdk_history(
         return [], None
 
     pending_tool_calls: dict[str, dict] = {}
-    pending_speech_explanation: str | None = None
 
     def parse_entries(
         ents: list[tuple[int, dict]],
@@ -990,7 +970,6 @@ def _read_sdk_history(
         messages: list[dict] = []
         byte_offsets: list[int] = []
         pending_tool_calls.clear()
-        pending_speech_explanation = None
 
         for byte_pos, entry in ents:
             entry_type = entry.get("type", "")
@@ -1021,25 +1000,13 @@ def _read_sdk_history(
                                 if source_uuid and source_uuid in pending_tool_calls:
                                     tool_call = pending_tool_calls.pop(source_uuid)
                                     tool_name = tool_call["name"]
-                                    if tool_name == "StructuredOutput":
-                                        try:
-                                            parsed = json.loads(tool_result)
-                                            explanation = parsed.get("explanation", "") if isinstance(parsed, dict) else ""
-                                        except (json.JSONDecodeError, TypeError):
-                                            explanation = str(tool_result)
-                                        if explanation:
-                                            pending_speech_explanation = explanation
-                                            if messages and messages[-1]["type"] == "ai":
-                                                messages[-1]["speech_explanation"] = pending_speech_explanation
-                                                pending_speech_explanation = None
-                                    else:
-                                        messages.append({
-                                            "type": "tool",
-                                            "name": tool_name,
-                                            "input": tool_call["input"],
-                                            "content": tool_result,
-                                        })
-                                        byte_offsets.append(byte_pos)
+                                    messages.append({
+                                        "type": "tool",
+                                        "name": tool_name,
+                                        "input": tool_call["input"],
+                                        "content": tool_result,
+                                    })
+                                    byte_offsets.append(byte_pos)
                     else:
                         text_blocks = [c for c in msg_content if c.get("type") == "text"]
                         image_blocks = [c for c in msg_content if c.get("type") == "image"]
@@ -1066,7 +1033,6 @@ def _read_sdk_history(
                 if isinstance(msg_content, list):
                     texts = []
                     thinking_content = None
-                    speech_explanation = None
                     for block in msg_content:
                         if block.get("type") == "text":
                             texts.append(block.get("text", ""))
@@ -1074,9 +1040,7 @@ def _read_sdk_history(
                             tool_name = block.get("name")
                             tool_input = block.get("input", {})
                             assistant_uuid = entry.get("uuid")
-                            if tool_name == "StructuredOutput":
-                                speech_explanation = tool_input.get("explanation", "")
-                            elif assistant_uuid and tool_name:
+                            if assistant_uuid and tool_name:
                                 pending_tool_calls[assistant_uuid] = {
                                     "name": tool_name,
                                     "input": tool_input,
@@ -1084,14 +1048,7 @@ def _read_sdk_history(
                         elif block.get("type") == "thinking":
                             thinking_content = block.get("thinking", "")
                     if texts:
-                        ai_msg = {"type": "ai", "content": "".join(texts)}
-                        if speech_explanation:
-                            ai_msg["speech_explanation"] = speech_explanation
-                        messages.append(ai_msg)
-                        byte_offsets.append(byte_pos)
-                    elif speech_explanation:
-                        # StructuredOutput-only response (no text block)
-                        messages.append({"type": "ai", "content": speech_explanation, "speech_explanation": speech_explanation})
+                        messages.append({"type": "ai", "content": "".join(texts)})
                         byte_offsets.append(byte_pos)
                     if thinking_content:
                         messages.append({"type": "thinking", "content": thinking_content})
@@ -1130,29 +1087,6 @@ def _read_sdk_history(
 
 
 
-
-SPEECH_EXPLANATION_SYSTEM_PROMPT = """After your response, produce a StructuredOutput with a spoken explanation.
-
-CRITICAL RULES FOR THIS SPOKEN EXPLANATION:
-1. TARGET AUDIENCE IS LISTENING, NOT READING: This text will be fed directly into a text-to-speech synthesizer and played aloud to the user's ears. Write it entirely as natural, conversational spoken narration.
-2. ABSOLUTELY NO MARKDOWN: Do NOT include any asterisks, bold markers, italics, bullet points, hashtags, headers, numbered lists, or backticks. Zero markdown formatting.
-3. ABSOLUTELY NO CODE OR SYNTAX SYMBOLS: Never write raw code, programming symbols, variable names with underscores, function signatures, or SQL queries (e.g. no 'SELECT *', 'exp.Select', '_walk()', 'foo_bar', brackets, or parentheses). Instead, explain all technical concepts and operations in plain, everyday conversational English (for example, say "the select expression" or "the recursive traversal function").
-4. CONTINUOUS SPOKEN PARAGRAPHS: Write in smooth, flowing natural paragraphs. Use conversational speech transitions ("To understand how this works...", "Next, let us look at...", "What this really means in practice is...") and clear everyday analogies.
-5. COMPLETE AND ENGAGING: Walk through the core concept, the step-by-step logic, and why it matters, as if an expert tutor is explaining it aloud over a voice call."""
-
-SYSTEM_PROMPT_EXPLANATION_SCHEMA = {
-    "type": "json_schema",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "explanation": {
-                "type": "string",
-                "description": "A natural, spoken-word voice script for text-to-speech audio playback. Must be written in 100% plain conversational English paragraphs with zero markdown, zero code snippets, and zero syntax symbols. Explains all technical concepts, logic, and significance verbally as if speaking aloud to a student on a phone call."
-            }
-        },
-        "required": ["explanation"],
-    },
-}
 
 # Read-only tool set applied when permission_mode == "read_only". These tools
 # are the only ones available to the agent — no Bash, Write, Edit, MultiEdit,
@@ -1202,15 +1136,7 @@ def _build_options(
         f"fe_mode={permission_mode!r} sdk_mode={sdk_mode!r} allowed={allowed_tools} disallowed={disallowed_tools}"
     )
     opts = ClaudeAgentOptions(
-        model=LLM_MODEL,
         system_prompt=system_prompt,
-        env={
-            "ANTHROPIC_API_KEY": LLM_API_KEY,
-            "ANTHROPIC_BASE_URL": LLM_BASE_URL,
-            "API_TIMEOUT_MS": "3000000",
-            "CLAUDE_CODE_RETRY_WATCHDOG": "1",
-            "CLAUDE_CODE_MAX_RETRIES": "10"
-        },
         cwd=workspace,
         resume=session_id if resume else None,
         session_id=session_id if not resume else None,
@@ -1493,66 +1419,6 @@ async def get_current_workspace(session_id: str | None = None):
             if s.session_id == session_id:
                 return {"workspace": s.cwd or _DEFAULT_WORKSPACE}
     return {"workspace": _DEFAULT_WORKSPACE}
-
-
-# ============== TTS audio endpoint ==============
-
-@app.get("/api/tts")
-async def tts_endpoint(q: str):
-    """High-performance Piper Neural TTS with in-memory LRU caching and thread pool offloading."""
-    clean_q = (q or "").strip()
-    if not clean_q:
-        raise HTTPException(status_code=400, detail="Text required")
-
-    cache_key = hashlib.sha256(clean_q.encode("utf-8")).hexdigest()
-
-    # 1. In-Memory LRU Cache lookup (0ms response)
-    async with _tts_cache_lock:
-        if cache_key in _tts_cache:
-            _tts_cache.move_to_end(cache_key)
-            return Response(
-                content=_tts_cache[cache_key],
-                media_type="audio/wav",
-                headers={
-                    "Cache-Control": "public, max-age=86400, immutable",
-                    "X-Cache": "HIT",
-                },
-            )
-
-    # 2. Synthesize with Piper Neural TTS via ThreadPool
-    if _piper_voice is not None:
-        loop = asyncio.get_running_loop()
-        try:
-            wav_bytes = await loop.run_in_executor(_tts_executor, _synthesize_piper_wav, clean_q)
-            async with _tts_cache_lock:
-                _tts_cache[cache_key] = wav_bytes
-                if len(_tts_cache) > _TTS_CACHE_MAX_SIZE:
-                    _tts_cache.popitem(last=False)
-            return Response(
-                content=wav_bytes,
-                media_type="audio/wav",
-                headers={
-                    "Cache-Control": "public, max-age=86400, immutable",
-                    "X-Cache": "MISS",
-                },
-            )
-        except Exception as e:
-            print(f"[ERROR] Piper synthesis failed for '{clean_q[:60]}...': {e}")
-
-    # Fallback to web TTS if Piper is not available or encounters an error
-    import urllib.parse
-    import urllib.request
-    try:
-        def fetch_fallback():
-            encoded = urllib.parse.quote(clean_q[:100])
-            url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q={encoded}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                return resp.read()
-        fallback_bytes = await asyncio.to_thread(fetch_fallback)
-        return Response(content=fallback_bytes, media_type="audio/mpeg")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {e}")
 
 
 # ============== Permission endpoints ==============

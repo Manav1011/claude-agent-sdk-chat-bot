@@ -73,9 +73,6 @@ export function ChatProvider({ children }) {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
 
   // Settings
-  const [speechExplanation, setSpeechExplanation] = useState(() => {
-    return localStorage.getItem('qa-speech-explanation') === 'true';
-  });
   const [settingSources, setSettingSourcesState] = useState(getInitialSettingSources);
   // ponytail: mirror settingSources into a ref so openSessionStream (wrapped in
   // useCallback with stable deps) can read the latest value at SSE-open time
@@ -156,7 +153,7 @@ export function ChatProvider({ children }) {
   // reference goes stale on re-render — the `done` handler reads `cur.streamContent` and
   // commits an empty string. Mirror the latest stream buffers in a ref so the handler
   // always sees fresh values without depending on closure-captured React state.
-  const streamBuffersRef = useRef({});  // { threadId: { streamContent, thinkingContent, speechExplanation } }
+  const streamBuffersRef = useRef({});  // { threadId: { streamContent, thinkingContent } }
 
   // Per-session EventSource manager for streaming-input mode (one long-lived SSE per session).
   // Map<threadId, { streamManager: { close, subscribe }, unsubscribe }>
@@ -175,7 +172,6 @@ export function ChatProvider({ children }) {
   // Computed streaming state for current active thread
   const activeStreamContent = (currentThreadId && activeStreams[currentThreadId]?.streamContent) || '';
   const activeThinkingContent = (currentThreadId && activeStreams[currentThreadId]?.thinkingContent) || '';
-  const activeSpeechExplanation = (currentThreadId && activeStreams[currentThreadId]?.speechExplanation) || null;
   const isStreaming = Boolean(currentThreadId && activeStreams[currentThreadId]?.isStreaming);
   const isAiResponding = Boolean(currentThreadId && activeStreams[currentThreadId]?.isAiResponding);
 
@@ -372,162 +368,6 @@ export function ChatProvider({ children }) {
       closeSessionStream(tid);
     }
   }, [closeSessionStream]);
-
-  // Speech TTS State
-  // Speech Audio State
-  const [speechState, setSpeechState] = useState({
-    isPlaying: false,
-    activeId: null,
-    rate: 1.0,
-  });
-
-  const currentSpeechIdRef = useRef(0);
-  const currentAudioRef = useRef(null);
-  const currentRateRef = useRef(1.0);
-  const preloadedAudiosRef = useRef([]);
-
-  // Stop Speech Audio
-  const stopSpeechAudio = useCallback(() => {
-    currentSpeechIdRef.current += 1;
-    if (preloadedAudiosRef.current) {
-      preloadedAudiosRef.current.forEach(a => {
-        try {
-          a.pause();
-          a.onended = null;
-          a.onerror = null;
-          a.src = '';
-        } catch {}
-      });
-      preloadedAudiosRef.current = [];
-    }
-    if (currentAudioRef.current) {
-      try {
-        currentAudioRef.current.pause();
-        currentAudioRef.current.onended = null;
-        currentAudioRef.current.onerror = null;
-        currentAudioRef.current.src = '';
-      } catch {}
-      currentAudioRef.current = null;
-    }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try { window.speechSynthesis.cancel(); } catch {}
-    }
-    setSpeechState(prev => ({ ...prev, isPlaying: false, activeId: null }));
-  }, []);
-
-  // Split text into natural sentence chunks for smooth streaming
-  const chunkTextForAudio = (text) => {
-    const clean = (text || '')
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/[*#_~]/g, '')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .trim();
-
-    if (!clean) return [];
-
-    const sentences = clean.match(/[^.!?\n]+[.!?\n]+|[^.!?\n]+$/g) || [clean];
-    const chunks = [];
-    let cur = '';
-
-    for (const s of sentences) {
-      const trimmed = s.trim();
-      if (!trimmed) continue;
-      if (cur && (cur.length + trimmed.length > 250)) {
-        chunks.push(cur);
-        cur = trimmed;
-      } else {
-        cur = cur ? `${cur} ${trimmed}` : trimmed;
-      }
-    }
-    if (cur) chunks.push(cur);
-    return chunks;
-  };
-
-  // Play Speech Audio via HTML5 Audio with zero-latency pre-buffering
-  const playSpeechExplanation = useCallback((text, id) => {
-    if (!text) return;
-
-    if (speechState.isPlaying && speechState.activeId === id) {
-      stopSpeechAudio();
-      return;
-    }
-
-    stopSpeechAudio();
-    currentSpeechIdRef.current += 1;
-    const speechId = currentSpeechIdRef.current;
-    currentRateRef.current = speechState.rate || 1.0;
-
-    const chunks = chunkTextForAudio(text);
-    if (chunks.length === 0) return;
-
-    setSpeechState(prev => ({ ...prev, isPlaying: true, activeId: id }));
-
-    // Pre-create and pre-load all chunk audio elements so next sentences buffer ahead of time
-    const audioQueue = chunks.map((chunk) => {
-      const audio = new Audio(`/api/tts?v=ryan&q=${encodeURIComponent(chunk)}`);
-      audio.preload = 'auto';
-      const rate = currentRateRef.current || 1.0;
-      audio.defaultPlaybackRate = rate;
-      audio.playbackRate = rate;
-      return audio;
-    });
-    preloadedAudiosRef.current = audioQueue;
-
-    let chunkIdx = 0;
-
-    const playNextChunk = () => {
-      if (speechId !== currentSpeechIdRef.current) return;
-      if (chunkIdx >= audioQueue.length) {
-        stopSpeechAudio();
-        return;
-      }
-
-      const audio = audioQueue[chunkIdx++];
-      currentAudioRef.current = audio;
-      const rate = currentRateRef.current || 1.0;
-      audio.defaultPlaybackRate = rate;
-      audio.playbackRate = rate;
-
-      audio.onended = () => {
-        if (speechId !== currentSpeechIdRef.current) return;
-        playNextChunk();
-      };
-
-      audio.onerror = (e) => {
-        console.warn('TTS chunk audio error, continuing seamlessly:', e);
-        if (speechId !== currentSpeechIdRef.current) return;
-        playNextChunk();
-      };
-
-      audio.play().catch((err) => {
-        console.warn('Audio playback error:', err);
-        if (speechId === currentSpeechIdRef.current) {
-          playNextChunk();
-        }
-      });
-    };
-
-    playNextChunk();
-  }, [speechState.isPlaying, speechState.activeId, speechState.rate, stopSpeechAudio]);
-
-  const cycleSpeechRate = useCallback((id, text) => {
-    const speeds = [1.0, 1.25, 1.5, 2.0];
-    const currentIdx = speeds.findIndex(s => Math.abs(s - currentRateRef.current) < 0.05);
-    const nextSpeed = speeds[(currentIdx + 1) % speeds.length];
-    currentRateRef.current = nextSpeed;
-    setSpeechState(prev => ({ ...prev, rate: nextSpeed }));
-
-    if (currentAudioRef.current) {
-      currentAudioRef.current.playbackRate = nextSpeed;
-    }
-    if (preloadedAudiosRef.current) {
-      preloadedAudiosRef.current.forEach(a => {
-        a.defaultPlaybackRate = nextSpeed;
-        a.playbackRate = nextSpeed;
-      });
-    }
-  }, []);
 
   // Set Current Thread Helper
   const setCurrentThread = useCallback((threadId) => {
@@ -801,7 +641,6 @@ export function ChatProvider({ children }) {
       localStorage.setItem('qa-active-project-id', String(targetProjId));
       setExpandedProjects((prev) => new Set(prev).add(targetProjId));
     }
-    stopSpeechAudio();
     setErrorMessage(null);
     setContextUsage(null);
     // ponytail: assign a UUID eagerly. sendMessage did this lazily on first
@@ -825,14 +664,13 @@ export function ChatProvider({ children }) {
       }
       return [...prev, { threadId: newThreadId, projectId: targetProjId, title: 'New Conversation' }];
     });
-  }, [stopSpeechAudio, setCurrentThread, activeProjectId]);
+  }, [setCurrentThread, activeProjectId]);
 
   // Select Session
   const selectSession = useCallback(async (threadId, projId = null, customTitle = null) => {
     if (window.innerWidth < 1024) {
       setIsSidebarOpen(false);
     }
-    stopSpeechAudio();
     const pId = projId || activeProjectId;
     if (pId) {
       setActiveProjectId(pId);
@@ -918,7 +756,7 @@ export function ChatProvider({ children }) {
         setIsSelectingSession(false);
       }, 150);
     }
-  }, [activeProjectId, stopSpeechAudio, setCurrentThread, refreshPendingPermissions, messages, activeStreams, projectSessions]);
+  }, [activeProjectId, setCurrentThread, refreshPendingPermissions, messages, activeStreams, projectSessions]);
 
   // Close Tab
   const closeTab = useCallback((threadIdToClose) => {
@@ -1020,7 +858,6 @@ export function ChatProvider({ children }) {
 
   // Delete Session
   const deleteSession = useCallback(async (threadId, projectId) => {
-    stopSpeechAudio();
     try {
       await deleteSessionApi(threadId);
     } catch (e) {
@@ -1044,7 +881,7 @@ export function ChatProvider({ children }) {
     if (currentThreadId === threadId) {
       startNewChat();
     }
-  }, [currentThreadId, stopSpeechAudio, startNewChat]);
+  }, [currentThreadId, startNewChat]);
 
   const stopStream = useCallback(async (targetThreadId) => {
     const threadId = (typeof targetThreadId === 'string' && targetThreadId) ? targetThreadId : currentThreadId;
@@ -1144,7 +981,6 @@ export function ChatProvider({ children }) {
         isAiResponding: true,
         streamContent: '',
         thinkingContent: '',
-        speechExplanation: null,
       },
     }));
 
@@ -1257,16 +1093,6 @@ export function ChatProvider({ children }) {
       return;
     }
 
-    if (data.type === 'speech_explanation') {
-      const buf = (streamBuffersRef.current[sessionThreadId] ||= { streamContent: '', thinkingContent: '' });
-      buf.speechExplanation = data.content;
-      setActiveStreams(prev => ({
-        ...prev,
-        [sessionThreadId]: { ...(prev[sessionThreadId] || {}), speechExplanation: data.content },
-      }));
-      return;
-    }
-
     if (data.type === 'text_delta') {
       const buf = (streamBuffersRef.current[sessionThreadId] ||= { streamContent: '', thinkingContent: '' });
       buf.streamContent += data.content || '';
@@ -1314,7 +1140,6 @@ export function ChatProvider({ children }) {
         itemsToCommit.push({
           type: 'ai',
           content: cur.streamContent,
-          speech_explanation: cur.speechExplanation || null,
         });
       }
       if (itemsToCommit.length > 0) {
@@ -1324,8 +1149,8 @@ export function ChatProvider({ children }) {
         }));
       }
 
-      // Reset buffers but keep speechExplanation until next speech event.
-      streamBuffersRef.current[sessionThreadId] = { streamContent: '', thinkingContent: '', speechExplanation: cur.speechExplanation || null };
+      // Reset buffers
+      streamBuffersRef.current[sessionThreadId] = { streamContent: '', thinkingContent: '' };
       setActiveStreams(prev => ({
         ...prev,
         [sessionThreadId]: {
@@ -1391,7 +1216,6 @@ export function ChatProvider({ children }) {
         itemsToCommit.push({
           type: 'ai',
           content: cur.streamContent,
-          speech_explanation: cur.speechExplanation || null,
           usage: data.usage || null,
         });
       }
@@ -1529,7 +1353,6 @@ export function ChatProvider({ children }) {
     isLoadingOlder,
     isSelectingSession,
     isLoadingMessages,
-    speechExplanation,
     settingSources,
     skillsMode,
     skillsList,
@@ -1550,7 +1373,6 @@ export function ChatProvider({ children }) {
     isAiResponding,
     activeStreamContent,
     activeThinkingContent,
-    activeSpeechExplanation,
     isSettingsOpen,
     isContextModalOpen,
     previewModalImage,
@@ -1562,11 +1384,6 @@ export function ChatProvider({ children }) {
     setIsMobileSidebarOpen: setIsSidebarOpen,
     notifications,
     errorMessage,
-    speechState,
-    setSpeechExplanation: (val) => {
-      setSpeechExplanation(val);
-      localStorage.setItem('qa-speech-explanation', String(val));
-    },
     setSettingSources: (val) => {
       setSettingSourcesState(val);
       settingSourcesRef.current = val;
@@ -1611,9 +1428,6 @@ export function ChatProvider({ children }) {
     startNewChat,
     sendMessage,
     stopStream,
-    playSpeechExplanation,
-    stopSpeechAudio,
-    cycleSpeechRate,
     pendingPermissions,
     respondToPermission,
     refreshPendingPermissions,
