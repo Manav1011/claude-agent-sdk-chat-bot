@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browser Speech Lab — STT & TTS</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f5f7fb; --panel:#fff; --text:#172033; --muted:#657087; --line:#dfe5ef; --accent:#5267e8; --accent2:#e9edff; --good:#16794b; --warn:#9b5b09; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10131b; --panel:#191e2a; --text:#eef2ff; --muted:#a0abc1; --line:#30394c; --accent:#9aa8ff; --accent2:#282f50; --good:#75d6a3; --warn:#ffc36a; }
+  }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:32px 18px 60px; }
+  header { margin-bottom:24px; }
+  .eyebrow { color:var(--accent); text-transform:uppercase; letter-spacing:.12em; font-size:12px; font-weight:750; }
+  h1 { margin:5px 0 8px; font-size:clamp(28px,4vw,40px); letter-spacing:-.04em; line-height:1.1; }
+  .sub { color:var(--muted); max-width:720px; margin:0; }
+  .tabs { display:flex; gap:8px; margin:24px 0 16px; }
+  button, select, input, textarea { font:inherit; }
+  button, select { cursor:pointer; }
+  button { border:1px solid var(--line); border-radius:11px; padding:10px 14px; background:var(--panel); color:var(--text); font-weight:650; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:white; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .tab.active { background:var(--accent2); border-color:var(--accent); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:22px; box-shadow:0 8px 28px #1111; }
+  .hidden { display:none !important; }
+  .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  .field { display:flex; flex-direction:column; gap:7px; min-width:0; }
+  label { font-size:13px; color:var(--muted); font-weight:700; }
+  select, input[type=text], textarea { width:100%; border:1px solid var(--line); border-radius:10px; padding:11px 12px; background:var(--bg); color:var(--text); }
+  textarea { min-height:190px; resize:vertical; line-height:1.65; }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .status { margin:14px 0 0; color:var(--muted); font-size:13px; display:flex; gap:8px; align-items:center; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex:none; }
+  .dot.live { background:#e34d65; box-shadow:0 0 0 4px #e34d6522; }
+  .dot.ok { background:var(--good); }
+  .note { margin-top:18px; border:1px solid var(--line); border-radius:12px; padding:12px 14px; color:var(--muted); font-size:13px; }
+  .mini { color:var(--muted); font-size:12px; }
+  .range-row { display:flex; gap:12px; align-items:center; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  output { min-width:44px; text-align:right; font-variant-numeric:tabular-nums; }
+  .section-title { margin:0 0 14px; font-size:18px; letter-spacing:-.02em; }
+  .transcript { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .metric { display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--line); }
+  .metric:last-child { border:0; }
+  .metric span:first-child { color:var(--muted); }
+  footer { text-align:center; color:var(--muted); font-size:12px; margin-top:18px; }
+  @media(max-width:700px) { .grid { grid-template-columns:1fr; } .panel { padding:16px; } .wrap { padding-top:24px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Local browser experiment</div>
+    <h1>Browser Speech Lab</h1>
+    <p class="sub">Try speech-to-text and text-to-speech in Chrome. Compare recognition languages, available voices, speed, pitch, and how well the browser handles natural speech.</p>
+  </header>
+
+  <div class="tabs" role="tablist" aria-label="Speech tool">
+    <button class="tab active" id="sttTab" role="tab" aria-selected="true">🎙 Speech to text</button>
+    <button class="tab" id="ttsTab" role="tab" aria-selected="false">🔊 Text to speech</button>
+  </div>
+
+  <section class="panel" id="sttPanel">
+    <h2 class="section-title">Speech recognition</h2>
+    <div class="grid">
+      <div class="field">
+        <label for="sttLang">Recognition language</label>
+        <select id="sttLang">
+          <option value="en-US">English (United States)</option>
+          <option value="en-IN">English (India)</option>
+          <option value="en-GB">English (United Kingdom)</option>
+          <option value="hi-IN">Hindi (India)</option>
+          <option value="gu-IN">Gujarati (India)</option>
+          <option value="es-ES">Spanish</option>
+          <option value="fr-FR">French</option>
+          <option value="de-DE">German</option>
+          <option value="ja-JP">Japanese</option>
+          <option value="auto">Auto / browser default (not supported by all browsers)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="sttMode">Recognition mode</label>
+        <select id="sttMode">
+          <option value="continuous">Continuous — keep listening until stopped</option>
+          <option value="single">Single phrase — stop after a result</option>
+        </select>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="startBtn">Start listening</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <button id="clearBtn">Clear transcript</button>
+      <button id="copyBtn">Copy transcript</button>
+    </div>
+    <div class="status" aria-live="polite"><span class="dot" id="sttDot"></span><span id="sttStatus">Ready. Press “Start listening” and allow microphone access.</span></div>
+    <div class="field" style="margin-top:16px">
+      <label for="transcript">Transcript — final text and live interim words</label>
+      <textarea id="transcript" placeholder="Your recognized words will appear here…" spellcheck="false"></textarea>
+      <div class="mini">Tip: test your normal speaking style, pauses, names, and English mixed with Hindi or Gujarati. Recognition quality depends on the browser and its recognition service.</div>
+    </div>
+    <div class="note" id="sttSupport"></div>
+  </section>
+
+  <section class="panel hidden" id="ttsPanel">
+    <h2 class="section-title">Text to speech</h2>
+    <div class="field">
+      <label for="speechText">Text to speak</label>
+      <textarea id="speechText">Hey! This is a quick test of the browser's text-to-speech voice. You can change the voice, speed, and pitch below to find what works best for your assistant.</textarea>
+    </div>
+    <div class="grid" style="margin-top:16px">
+      <div class="field">
+        <label for="voiceSelect">Available system / browser voice</label>
+        <select id="voiceSelect"><option>Loading voices…</option></select>
+        <div class="mini" id="voiceInfo">Voice availability varies by operating system and browser.</div>
+      </div>
+      <div class="field">
+        <label for="ttsLang">Filter voices by language</label>
+        <select id="ttsLang">
+          <option value="all">All available voices</option>
+          <option value="en">English</option>
+          <option value="en-IN">English (India)</option>
+          <option value="en-US">English (United States)</option>
+          <option value="hi">Hindi</option>
+          <option value="gu">Gujarati</option>
+          <option value="es">Spanish</option>
+          <option value="fr">French</option>
+        </select>
+      </div>
+    </div>
+    <div class="grid" style="margin-top:16px">
+      <div class="field">
+        <label for="rate">Speaking rate</label>
+        <div class="range-row"><input id="rate" type="range" min="0.5" max="2" value="1" step="0.1"><output id="rateOut">1.0×</output></div>
+      </div>
+      <div class="field">
+        <label for="pitch">Pitch</label>
+        <div class="range-row"><input id="pitch" type="range" min="0" max="2" value="1" step="0.1"><output id="pitchOut">1.0</output></div>
+      </div>
+      <div class="field">
+        <label for="volume">Volume</label>
+        <div class="range-row"><input id="volume" type="range" min="0" max="1" value="1" step="0.1"><output id="volumeOut">100%</output></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="speakBtn">▶ Speak</button>
+      <button id="pauseBtn">Pause</button>
+      <button id="resumeBtn">Resume</button>
+      <button id="cancelBtn">Stop speech</button>
+      <button id="sampleBtn">Use sample text</button>
+    </div>
+    <div class="status" aria-live="polite"><span class="dot" id="ttsDot"></span><span id="ttsStatus">Choose a voice and press Speak.</span></div>
+    <div class="note">TTS uses voices exposed by your browser / operating system. On Linux, install additional speech voices in your OS if the list is limited. Some voices may need an internet connection.</div>
+  </section>
+
+  <section class="panel" style="margin-top:16px">
+    <h2 class="section-title">Environment</h2>
+    <div class="metric"><span>Browser</span><strong id="browserName">Checking…</strong></div>
+    <div class="metric"><span>Speech recognition API</span><strong id="recognitionSupport">Checking…</strong></div>
+    <div class="metric"><span>Speech synthesis API</span><strong id="synthesisSupport">Checking…</strong></div>
+    <div class="metric"><span>Voice count</span><strong id="voiceCount">Checking…</strong></div>
+  </section>
+  <footer>No account or API key required. Recognition may send audio to the browser provider's service; see your browser's privacy settings.</footer>
+</div>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const synth = window.speechSynthesis;
+  let recognition = null, listening = false, finalText = '', interimText = '';
+  let voices = [];
+
+  // Tabs
+  function showTab(which) {
+    const stt = which === 'stt';
+    $('sttPanel').classList.toggle('hidden', !stt);
+    $('ttsPanel').classList.toggle('hidden', stt);
+    $('sttTab').classList.toggle('active', stt);
+    $('ttsTab').classList.toggle('active', !stt);
+    $('sttTab').setAttribute('aria-selected', String(stt));
+    $('ttsTab').setAttribute('aria-selected', String(!stt));
+  }
+  $('sttTab').addEventListener('click', () => showTab('stt'));
+  $('ttsTab').addEventListener('click', () => showTab('tts'));
+
+  function setStatus(id, dotId, message, state='') {
+    $(id).textContent = message;
+    $(dotId).className = 'dot' + (state ? ' ' + state : '');
+  }
+  function updateTranscript() { $('transcript').value = finalText + (interimText ? (finalText && !finalText.endsWith(' ') ? ' ' : '') + interimText : ''); }
+  function stopRecognition() {
+    if (recognition && listening) {
+      try { recognition.stop(); } catch (_) {}
+    }
+  }
+  function startRecognition() {
+    if (!Recognition) {
+      setStatus('sttStatus','sttDot','Speech recognition is not available in this browser. Try the latest Google Chrome.','');
+      return;
+    }
+    if (listening) return;
+    finalText = $('transcript').value.trim();
+    if (finalText) finalText += ' ';
+    interimText = '';
+    recognition = new Recognition();
+    const lang = $('sttLang').value;
+    if (lang !== 'auto') recognition.lang = lang;
+    recognition.continuous = $('sttMode').value === 'continuous';
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognition.onstart = () => {
+      listening = true;
+      $('startBtn').disabled = true; $('stopBtn').disabled = false;
+      setStatus('sttStatus','sttDot','Listening… speak naturally.','live');
+    };
+    recognition.onresult = event => {
+      interimText = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const part = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += part + ' ';
+        else interimText += part;
+      }
+      updateTranscript();
+    };
+    recognition.onerror = event => {
+      const messages = {
+        'not-allowed':'Microphone permission was denied. Allow microphone access in Chrome site settings.',
+        'service-not-allowed':'The browser speech recognition service is unavailable or blocked.',
+        'no-speech':'No speech detected. Try again and speak closer to the microphone.',
+        'audio-capture':'No microphone was found. Check your system input device.',
+        'network':'Recognition service network error. Check your connection and try again.'
+      };
+      setStatus('sttStatus','sttDot',messages[event.error] || ('Recognition error: ' + event.error),'');
+    };
+    recognition.onend = () => {
+      listening = false; $('startBtn').disabled = false; $('stopBtn').disabled = true;
+      interimText = ''; updateTranscript();
+      if ($('sttStatus').textContent.startsWith('Listening')) setStatus('sttStatus','sttDot','Stopped. Press Start listening to try again.','ok');
+    };
+    try { recognition.start(); }
+    catch (err) { listening = false; $('startBtn').disabled = false; $('stopBtn').disabled = true; setStatus('sttStatus','sttDot','Could not start: ' + err.message,''); }
+  }
+  $('startBtn').addEventListener('click', startRecognition);
+  $('stopBtn').addEventListener('click', stopRecognition);
+  $('clearBtn').addEventListener('click', () => { finalText=''; interimText=''; $('transcript').value=''; setStatus('sttStatus','sttDot','Transcript cleared.',''); });
+  $('transcript').addEventListener('input', () => { if (!listening) finalText = $('transcript').value; });
+  $('copyBtn').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('transcript').value); setStatus('sttStatus','sttDot','Transcript copied to clipboard.','ok'); }
+    catch (_) { $('transcript').select(); document.execCommand('copy'); setStatus('sttStatus','sttDot','Transcript selected / copied if permitted.','ok'); }
+  });
+
+  // TTS
+  function loadVoices() {
+    if (!synth) return;
+    voices = synth.getVoices();
+    const filter = $('ttsLang').value;
+    const filtered = voices.filter(v => filter === 'all' || (filter === 'en' ? v.lang.toLowerCase().startsWith('en') : filter === 'hi' ? v.lang.toLowerCase().startsWith('hi') : filter === 'gu' ? v.lang.toLowerCase().startsWith('gu') : v.lang.toLowerCase() === filter.toLowerCase()));
+    const select = $('voiceSelect');
+    const previous = select.value;
+    select.innerHTML = '';
+    if (!filtered.length) {
+      const option = document.createElement('option');
+      option.value = ''; option.textContent = voices.length ? 'No matching voices available' : 'No voices reported by browser';
+      select.appendChild(option);
+    } else {
+      filtered.forEach((v) => {
+        const option = document.createElement('option');
+        option.value = voices.indexOf(v);
+        option.textContent = `${v.name} — ${v.lang}${v.default ? ' (default)' : ''}`;
+        select.appendChild(option);
+      });
+      if ([...select.options].some(o => o.value === previous)) select.value = previous;
+      else {
+        const preferred = filtered.find(v => v.default) || filtered.find(v => v.lang.toLowerCase() === 'en-us') || filtered[0];
+        select.value = String(voices.indexOf(preferred));
+      }
+    }
+    $('voiceCount').textContent = String(voices.length);
+    $('voiceInfo').textContent = voices.length ? `${filtered.length} voice(s) shown. Voice names marked “local” vary by system; quality and availability differ.` : 'No voices are available yet. Try refreshing the page.';
+  }
+  if (synth) {
+    loadVoices();
+    if (synth.onvoiceschanged !== undefined) synth.addEventListener('voiceschanged', loadVoices);
+  }
+  $('ttsLang').addEventListener('change', loadVoices);
+  function selectedVoice() {
+    const index = Number($('voiceSelect').value);
+    return Number.isInteger(index) ? voices[index] || null : null;
+  }
+  $('voiceSelect').addEventListener('change', () => {
+    const v = selectedVoice();
+    $('voiceInfo').textContent = v ? `Language: ${v.lang} · ${v.localService ? 'reported as local' : 'may use a remote service'}${v.default ? ' · default voice' : ''}` : 'No voice selected.';
+  });
+  $('rate').addEventListener('input', () => $('rateOut').textContent = Number($('rate').value).toFixed(1) + '×');
+  $('pitch').addEventListener('input', () => $('pitchOut').textContent = Number($('pitch').value).toFixed(1));
+  $('volume').addEventListener('input', () => $('volumeOut').textContent = Math.round(Number($('volume').value)*100) + '%');
+  $('speakBtn').addEventListener('click', () => {
+    if (!synth) { setStatus('ttsStatus','ttsDot','Speech synthesis is not supported in this browser.',''); return; }
+    const text = $('speechText').value.trim();
+    if (!text) { setStatus('ttsStatus','ttsDot','Enter some text first.',''); return; }
+    synth.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice = selectedVoice();
+    if (voice) utterance.voice = voice;
+    utterance.rate = Number($('rate').value);
+    utterance.pitch = Number($('pitch').value);
+    utterance.volume = Number($('volume').value);
+    utterance.onstart = () => setStatus('ttsStatus','ttsDot','Speaking…','live');
+    utterance.onend = () => setStatus('ttsStatus','ttsDot','Finished speaking.','ok');
+    utterance.onerror = e => setStatus('ttsStatus','ttsDot','Speech error: ' + e.error,'');
+    setStatus('ttsStatus','ttsDot','Preparing speech…','');
+    synth.speak(utterance);
+  });
+  $('pauseBtn').addEventListener('click', () => { if (synth) { synth.pause(); setStatus('ttsStatus','ttsDot','Speech paused.',''); } });
+  $('resumeBtn').addEventListener('click', () => { if (synth) { synth.resume(); setStatus('ttsStatus','ttsDot','Speech resumed.','live'); } });
+  $('cancelBtn').addEventListener('click', () => { if (synth) synth.cancel(); setStatus('ttsStatus','ttsDot','Speech stopped.',''); });
+  $('sampleBtn').addEventListener('click', () => {
+    $('speechText').value = "Hi! I'm your voice assistant. I can help you think through a problem, answer questions, and talk naturally. You can interrupt me, change the speaking speed, or try a different voice.";
+  });
+
+  // Environment
+  const ua = navigator.userAgent;
+  $('browserName').textContent = /Edg\//.test(ua) ? 'Microsoft Edge' : /Chrome\//.test(ua) ? 'Google Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  $('recognitionSupport').textContent = Recognition ? 'Available' : 'Not detected';
+  $('synthesisSupport').textContent = synth ? 'Available' : 'Not detected';
+  $('sttSupport').textContent = Recognition
+    ? 'Speech recognition API detected. Chrome may use an online recognition service, and language availability varies. If file:// microphone access fails, open this page through http://localhost.'
+    : 'SpeechRecognition is not exposed by this browser. Use the latest desktop Chrome, or test in an environment where the Web Speech API is enabled.';
+  $('voiceCount').textContent = synth ? String(voices.length) : 'Not supported';
+})();
+</script>
+</body>
+</html>

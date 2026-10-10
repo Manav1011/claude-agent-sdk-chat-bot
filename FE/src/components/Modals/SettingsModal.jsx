@@ -19,6 +19,8 @@ export default function SettingsModal() {
     outputStyle,
     setOutputStyle,
     availableOutputStyles,
+    effort,
+    setEffort,
     theme,
     setTheme,
   } = useChat();
@@ -355,7 +357,40 @@ export default function SettingsModal() {
           </div>
         </div>
 
-        {/* 4. Output Style */}
+        {/* 4. Effort */}
+        <div className="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs font-medium text-white">Thinking Effort</div>
+              <div className="text-[11px] text-txt-subtle">Controls extended thinking depth</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-5 gap-1 bg-dark-bg/80 p-1 rounded-lg border border-dark-border/60 text-[10px] font-medium">
+            {['low', 'medium', 'high', 'xhigh', 'max'].map((val) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setEffort(val)}
+                className={`py-1 rounded transition-colors text-center cursor-pointer ${
+                  effort === val
+                    ? 'bg-brand text-white shadow-sm'
+                    : 'text-txt-subtle hover:text-white'
+                }`}
+              >
+                {val}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10px] text-txt-subtle font-mono">
+            {effort === 'low' ? 'Minimal thinking' :
+             effort === 'medium' ? 'Balanced' :
+             effort === 'high' ? 'Thorough' :
+             effort === 'xhigh' ? 'Very thorough' :
+             'Maximum effort'}
+          </div>
+        </div>
+
+        {/* 5. Output Style */}
         {availableOutputStyles.length > 0 && (
           <div className="p-3 rounded-xl bg-dark-elevated/40 border border-dark-border/60 space-y-2">
             <div className="flex items-center justify-between">

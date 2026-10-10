@@ -222,6 +222,7 @@ class _UserMessage(BaseModel):
     skills: list[str] | Literal["all"] | None = None
     permission_mode: Literal["read_only", "bypassPermissions", "plan"] | None = None
     output_style: str | None = None
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
 
 
 class SessionLoop:
@@ -338,6 +339,7 @@ class SessionLoop:
         skills: list | Literal["all"] | None,
         permission_mode: str | None,
         output_style: str | None = None,
+        effort: str | None = None,
     ) -> None:
         # ponytail: same shape as the permission-mode respawn in _loop_body,
         # generalized for any setting change. _build_client with explicit
@@ -364,6 +366,7 @@ class SessionLoop:
             setting_sources=setting_sources,
             skills=skills,
             output_style=output_style,
+            effort=effort,
             # FE sends explicit values (null = SDK default, not "no change");
             # the locked-settings fallback is for _loop_body's respawn only.
             use_locked_fallback=False,
@@ -377,6 +380,7 @@ class SessionLoop:
             "setting_sources": setting_sources,
             "skills": skills,
             "output_style": output_style,
+            "effort": effort,
         }
         self._current_permission_mode = mode
         if old_client is not None:
@@ -573,6 +577,7 @@ class SessionLoop:
         setting_sources: list | None = None,
         skills: list | Literal["all"] | None = None,
         output_style: str | None = None,
+        effort: str | None = None,
         use_locked_fallback: bool = True,
     ) -> ClaudeSDKClient:
         # ponytail: build the SDK client for a specific FE mode. The toolset is
@@ -581,7 +586,7 @@ class SessionLoop:
         # same session_id through, so the Claude API session and JSONL file
         # stay continuous.
         #
-        # setting_sources/skills/output_style overrides: if none are passed, fall through
+        # setting_sources/skills/output_style/effort overrides: if none are passed, fall through
         # to the locked settings captured on the first message. ensure_commands_broadcast
         # passes explicit values so the broadcast client is built with the FE's
         # declared scope BEFORE the first message locks anything in. After the
@@ -591,11 +596,12 @@ class SessionLoop:
         # not "no change" — it passes use_locked_fallback=False so reverting
         # to defaults actually reaches the live client instead of silently
         # re-applying the locked scope.
-        if use_locked_fallback and setting_sources is None and skills is None and output_style is None:
+        if use_locked_fallback and setting_sources is None and skills is None and output_style is None and effort is None:
             s = self._locked_settings or {}
             setting_sources = s.get("setting_sources")
             skills = s.get("skills")
             output_style = s.get("output_style")
+            effort = s.get("effort")
         project_key = _sdk_project_key(self.workspace)
         jsonl_path = Path.home() / ".claude" / "projects" / project_key / f"{self.session_id}.jsonl"
         opts = _build_options(
@@ -606,6 +612,7 @@ class SessionLoop:
             skills=skills,
             permission_mode=mode,
             output_style=output_style,
+            effort=effort,
         )
         client = ClaudeSDKClient(options=opts)
         await client.connect()
@@ -637,6 +644,7 @@ class SessionLoop:
                         "setting_sources": msg.setting_sources,
                         "skills": msg.skills,
                         "output_style": msg.output_style,
+                        "effort": msg.effort,
                     }
                 # ponytail: live permission switch. The toolset is launch-time in
                 # the SDK, so a mode flip means respawning the subprocess with
@@ -662,6 +670,7 @@ class SessionLoop:
                         setting_sources=locked.get("setting_sources"),
                         skills=locked.get("skills"),
                         output_style=locked.get("output_style"),
+                        effort=locked.get("effort"),
                     )
                 self._current_permission_mode = target_mode
                 # ponytail: re-broadcast the SDK's command surface every turn so
@@ -688,7 +697,6 @@ class SessionLoop:
                     assert self._client is not None
                     await self._client.query(self._make_generator(msg), session_id=self.session_id)
                     async for sdk_event in self._client.receive_response():
-                        print(f"[LLM_CHUNK] {sdk_event}", flush=True)
                         for legacy in self._translate_sdk_message(sdk_event, jsonl_path, jsonl_size_before):
                             await self._broadcast(legacy)
                     # Per-turn context snapshot from get_context_usage(). This is the
@@ -1141,6 +1149,7 @@ def _build_options(
     skills: list[str] | Literal["all"] | None = None,
     permission_mode: str | None = None,
     output_style: str | None = None,
+    effort: str | None = None,
 ) -> ClaudeAgentOptions:
     # ponytail: SDK hangs when skills=[] (empty list); coerce to None so it uses defaults.
     if skills == []:
@@ -1151,7 +1160,8 @@ def _build_options(
     settings = json.dumps({"outputStyle": output_style}) if output_style else None
     print(
         f"[SDK_OPTS] session_id={session_id} setting_sources={setting_sources} skills={skills} "
-        f"fe_mode={permission_mode!r} sdk_mode={sdk_mode!r} output_style={output_style!r} allowed={allowed_tools} disallowed={disallowed_tools}"
+        f"fe_mode={permission_mode!r} sdk_mode={sdk_mode!r} output_style={output_style!r} "
+        f"effort={effort!r} allowed={allowed_tools} disallowed={disallowed_tools}"
     )
     opts = ClaudeAgentOptions(
         system_prompt=system_prompt,
@@ -1165,6 +1175,7 @@ def _build_options(
         allowed_tools=allowed_tools or [],
         disallowed_tools=disallowed_tools or [],
         settings=settings,
+        effort=cast(Literal["low", "medium", "high", "xhigh", "max"], effort) if effort else None,
     )
     return opts
 
@@ -1509,7 +1520,7 @@ async def post_session_message(
         uuid.UUID(session_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="session_id must be a UUID")
-    print(f"[FE_OPTS] {session_id} setting_sources={body.setting_sources} skills={body.skills} permission_mode={body.permission_mode} output_style={body.output_style!r}")
+    print(f"[FE_OPTS] {session_id} setting_sources={body.setting_sources} skills={body.skills} permission_mode={body.permission_mode} output_style={body.output_style!r} effort={body.effort!r}")
     loop = await get_or_create_loop(workspace, session_id)
     await loop.enqueue(body)
     return {"status": "queued", "session_id": session_id}
@@ -1531,7 +1542,7 @@ async def post_session_settings(
         raise HTTPException(status_code=400, detail="session_id must be a UUID")
     print(
         f"[FE_OPTS] rebuild {session_id} setting_sources={body.setting_sources} "
-        f"skills={body.skills} permission_mode={body.permission_mode} output_style={body.output_style!r}"
+        f"skills={body.skills} permission_mode={body.permission_mode} output_style={body.output_style!r} effort={body.effort!r}"
     )
     loop = await get_or_create_loop(workspace, session_id)
     try:
@@ -1546,6 +1557,7 @@ async def post_session_settings(
                 skills=body.skills,
                 permission_mode=body.permission_mode,
                 output_style=body.output_style,
+                effort=body.effort,
             )
     except Exception as e:
         # ponytail: rebuild is best-effort. If it fails, the loop is in

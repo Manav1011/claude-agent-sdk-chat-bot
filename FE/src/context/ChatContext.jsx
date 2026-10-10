@@ -27,6 +27,7 @@ function settingsSig(s) {
     s.skills ?? null,
     s.permissionMode ?? null,
     s.outputStyle ?? null,
+    s.effort ?? null,
   ]);
 }
 
@@ -99,6 +100,9 @@ export function ChatProvider({ children }) {
   const [outputStyle, setOutputStyle] = useState(() => {
     return localStorage.getItem('qa-output-style') || null;
   });
+  const [effort, setEffort] = useState(() => {
+    return localStorage.getItem('qa-effort') || 'medium';
+  });
   // ponytail: available output styles fetched from server-info.
   const [availableOutputStyles, setAvailableOutputStyles] = useState([]);
   // ponytail: { [threadId]: boolean } — true while a rebuild POST is in flight
@@ -156,6 +160,12 @@ export function ChatProvider({ children }) {
       localStorage.setItem('qa-output-style', outputStyle || '');
     } catch (e) {}
   }, [outputStyle]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('qa-effort', effort || '');
+    } catch (e) {}
+  }, [effort]);
 
   // Streaming & Context usage (per-session streaming state)
   const [contextUsage, setContextUsage] = useState(null);
@@ -352,6 +362,7 @@ export function ChatProvider({ children }) {
           skills: settings.skills,
           permissionMode: settings.permissionMode,
           outputStyle: settings.outputStyle,
+          effort: settings.effort,
           signal: controller.signal,
         });
         // ponytail: record on SUCCESS only — an aborted/failed POST must not
@@ -1024,6 +1035,7 @@ export function ChatProvider({ children }) {
         skills: settings?.skills,
         permissionMode: settings?.permissionMode,
         outputStyle: settings?.outputStyle,
+        effort: settings?.effort,
       });
       // The server locks these on the first message — same settings state,
       // so a modal Done that changed nothing must not trigger a rebuild.
@@ -1384,6 +1396,8 @@ export function ChatProvider({ children }) {
     outputStyle,
     setOutputStyle,
     availableOutputStyles,
+    effort,
+    setEffort,
     rebuilding,
     rebuildSession,
     // Done-button entry point: one rebuild for all toggled settings, no-op
@@ -1394,6 +1408,7 @@ export function ChatProvider({ children }) {
         skills: skillsWireValue(skillsMode, skillsList),
         permissionMode,
         outputStyle,
+        effort,
       });
     },
     contextUsage,

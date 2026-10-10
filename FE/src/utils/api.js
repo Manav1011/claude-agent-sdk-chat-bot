@@ -91,7 +91,7 @@ export async function submitPermissionDecision({ requestId, sessionId, decision,
 
 // --- Streaming-input mode helpers (long-lived SSE session) ---
 
-export async function sendSessionMessage({ threadId, workspace, content, images = null, settingSources, skills, permissionMode, outputStyle, signal }) {
+export async function sendSessionMessage({ threadId, workspace, content, images = null, settingSources, skills, permissionMode, outputStyle, effort, signal }) {
   const res = await fetch(`/api/sessions/${threadId}/messages?workspace=${encodeURIComponent(workspace)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -102,6 +102,7 @@ export async function sendSessionMessage({ threadId, workspace, content, images 
       skills: skills ?? null,
       permission_mode: permissionMode ?? null,
       output_style: outputStyle ?? null,
+      effort: effort ?? null,
     }),
     signal,
   });
@@ -130,7 +131,7 @@ export async function fetchServerInfo(workspace) {
   return res.json();
 }
 
-export async function rebuildSessionSettings({ threadId, workspace, settingSources, skills, permissionMode, outputStyle, signal }) {
+export async function rebuildSessionSettings({ threadId, workspace, settingSources, skills, permissionMode, outputStyle, effort, signal }) {
   const res = await fetch(`/api/sessions/${threadId}/settings?workspace=${encodeURIComponent(workspace)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -140,6 +141,7 @@ export async function rebuildSessionSettings({ threadId, workspace, settingSourc
       skills: skills ?? null,
       permission_mode: permissionMode ?? null,
       output_style: outputStyle ?? null,
+      effort: effort ?? null,
     }),
     signal,
   });
